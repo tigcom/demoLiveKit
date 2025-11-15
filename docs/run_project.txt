@@ -1,0 +1,279 @@
+================================================================================
+HƯỚNG DẪN CHẠY DỰ ÁN (BẮT ĐẦU TỪNG BƯỚC)
+================================================================================
+
+Khi bạn đã cài đặt xong tất cả (xem file setup_and_install.txt),
+bạn có thể chạy dự án bằng hướng dẫn này.
+
+CHÚC BẠN THÀNH CÔNG! 🎉
+
+
+BƯỚC CHUẨN BỊ
+================================================================================
+
+Bạn cần 3 cửa sổ PowerShell/Terminal riêng biệt.
+Hãy đóng hết cửa sổ cũ, rồi mở 3 cửa sổ mới.
+
+Gợi ý phân chia:
+  Cửa sổ 1: Chạy Token Server (uvicorn)
+  Cửa sổ 2: Chạy Frontend (npm run dev)
+  Cửa sổ 3: Chạy Backend Agent (python agent.py)
+  (Tùy chọn: mở thêm cửa sổ để chạy test script hoặc tiền tải mô hình)
+
+
+================================================================================
+
+LƯU Ý VỀ MÔ HÌNH LLM (Transformers):
+================================================================================
+
+Ở phiên bản này, agent sử dụng Hugging Face Transformers + PyTorch để
+chạy mô hình LLM cục bộ (hoặc dùng model đã cài sẵn). Bạn không cần một
+server riêng như Ollama nữa.
+
+Nếu bạn muốn tiền tải một model nhỏ để thử nghiệm:
+
+```powershell
+python -c "from transformers import pipeline; p=pipeline('text-generation', model='gpt2'); print(p('Hello', max_new_tokens=5))"
+```
+
+Lệnh trên sẽ tải model `gpt2` nếu chưa có và in ra kết quả ngắn để xác nhận.
+
+
+================================================================================
+BƯỚC 2: CHẠY TOKEN SERVER
+================================================================================
+
+Đây là máy chủ cấp vé truy cập cho frontend.
+
+Cửa sổ 2 - Command Prompt:
+  
+  BƯỚC 2.1: Vào thư mục backend
+    cd d:\project\livekit\livekit-voice-demo\backend
+  
+  BƯỚC 2.2: Kích hoạt virtual environment
+    .venv\Scripts\activate
+    
+    Nếu thành công, bạn sẽ thấy "(.venv)" ở đầu dòng
+  
+  BƯỚC 2.3: Chạy token server
+    uvicorn token_server:app --host 0.0.0.0 --port 8000
+    
+    Bạn sẽ thấy dòng:
+      Uvicorn running on http://0.0.0.0:8000
+
+KIỂM TRA TOKEN SERVER:
+  Mở trình duyệt, truy cập: http://localhost:8000/healthz
+  Bạn sẽ thấy "OK" hoặc một dòng JSON → Token Server OK
+
+
+================================================================================
+
+BƯỚC 3: CHẠY FRONTEND (TRANG WEB)
+================================================================================
+
+Đây là trang web bạn sẽ dùng để nói với AI.
+
+Trong cửa sổ Frontend:
+
+```powershell
+cd d:\project\livekit\livekit-voice-demo\frontend
+npm run dev
+```
+
+Bạn sẽ thấy dòng báo Local URL, ví dụ: http://localhost:5173
+
+KIỂM TRA FRONTEND:
+  1. Mở trình duyệt, truy cập: http://localhost:5173
+  2. Nhập Room: demo-room, Identity: user-1
+  3. Nhấn "Join Room" và chờ kết nối
+
+Nếu không kết nối được:
+  - Kiểm tra Token Server có chạy (Bước 2)
+  - Kiểm tra console trình duyệt (F12 → Console)
+
+
+================================================================================
+BƯỚC 4: CHẠY BACKEND AGENT
+================================================================================
+
+Đây là bộ não, sẽ nhận tiếng nói và trả lời.
+
+Cửa sổ 2 hoặc 4 - Command Prompt:
+  
+  BƯỚC 4.1: Vào thư mục backend
+    cd d:\project\livekit\livekit-voice-demo\backend
+  
+  BƯỚC 4.2: Kích hoạt virtual environment (nếu chưa có)
+    .venv\Scripts\activate
+  
+  BƯỚC 4.3: Chạy agent (Local debug hoặc LiveKit)
+    # Local debug (không cần LiveKit) - thuận tiện để kiểm thử pipeline STT→LLM→TTS
+    python agent.py --local-debug --sample ./sample.wav --output ./reply.wav
+
+    # Hoặc kết nối thật tới LiveKit (yêu cầu LIVEKIT_* trong .env)
+    python agent.py --livekit
+
+    Khi chạy --local-debug, tập lệnh sẽ:
+      - Transcribe sample.wav
+      - Gọi LLM (transformers)
+      - Sinh TTS và lưu reply.wav
+
+    Khi chạy --livekit, agent sẽ kết nối tới LiveKit và xử lý audio thực thời gian.
+
+
+================================================================================
+BƯỚC 5: KIỂM TRA HỆ THỐNG
+================================================================================
+
+Khi tất cả các phần đều chạy, hãy kiểm tra:
+
+Cửa sổ 1 (Ollama):
+  ✓ "Listening on 127.0.0.1:11434"
+
+Cửa sổ 2 (Token Server):
+  ✓ "Application startup complete"
+
+Cửa sổ 3 (Frontend):
+  ✓ "Local:   http://localhost:5173/"
+
+Cửa sổ 4 (Agent):
+  ✓ "✓ Connected to demo-room"
+  ✓ "✓ Local participant: agent-1"
+  ✓ "👤 Participant connected: user-1"
+
+Nếu tất cả đều ✓, bạn đã chuẩn bị xong!
+
+
+================================================================================
+BƯỚC 6: TEST TÍNH NĂNG CHÍNH
+================================================================================
+
+TEST 1: KIỂM TRA MICRO
+
+  1. Mở http://localhost:5173 trên trình duyệt
+  2. Bấm nút "Join Room"
+  3. Chờ kết nối thành công
+  4. Mở browser console (F12 → Console)
+  5. Bạn sẽ thấy log:
+     "Connected to room: demo-room"
+
+TEST 2: KIỂM TRA AI NGHE ĐƯỢC
+
+  1. Nói gì đó vào micro (ví dụ: "Chào")
+  2. Nhìn vào cửa sổ Agent (bước 4)
+  3. Bạn sẽ thấy:
+     "🗣️ User said: Chào"
+     
+  Nếu thấy vậy, AI đã nghe được ✓
+
+TEST 3: KIỂM TRA AI TRRESPONSE
+
+  1. Chờ AI xử lý (chuyển thành chữ, hỏi LLM, chuyển thành tiếng nói)
+  2. Khoảng 3-10 giây, bạn sẽ thấy trong cửa sổ Agent:
+     "💬 Agent reply: Xin chào! Có gì tôi giúp bạn?"
+     
+  Nếu thấy vậy, AI đã suy nghĩ được ✓
+
+TEST 4: KIỂM TRA ĐƠN LẠI TIẾNG NÓI
+
+  1. Nghe loa máy tính
+  2. Bạn sẽ nghe tiếng AI nói lại câu trả lời
+  3. Bạn sẽ thấy trong cửa sổ Agent:
+     "✓ Published audio track: agent-reply"
+     
+  Nếu nghe được, AI đã phát âm thành công ✓
+
+
+================================================================================
+BƯỚC 7: DỪNG DỰ ÁN
+================================================================================
+
+Khi muốn dừng, hãy làm theo thứ tự này:
+
+1. Dừng Agent (Cửa sổ 4):
+   Nhấn Ctrl + C
+   
+2. Dừng Frontend (Cửa sổ 3):
+   Nhấn Ctrl + C
+   
+3. Dừng Token Server (Cửa sổ 2):
+   Nhấn Ctrl + C
+   
+4. Dừng Ollama (Cửa sổ 1):
+   Nhấn Ctrl + C
+   
+5. Đóng tất cả cửa sổ Command Prompt
+
+
+================================================================================
+VẤN ĐỀ PHỔ BIẾN VÀ CÁCH SỬA
+================================================================================
+
+VẤN ĐỀ: "Port 8000 đã bị sử dụng"
+  Nguyên nhân: Token server đang chạy hoặc chương trình khác dùng cổng này
+  Sửa:
+    - Dừng token server cũ (Ctrl + C)
+    - Hoặc thay cổng khác: uvicorn token_server:app --port 8001
+
+VẤN ĐỀ: "Module not found: livekit"
+  Nguyên nhân: Virtual environment chưa kích hoạt hoặc chưa cài thư viện
+  Sửa:
+    - Chắc chắn virtual environment đã kích hoạt (thấy "(.venv)")
+    - Chạy lại: pip install -r requirements.txt
+
+VẤN ĐỀ: "LLM/Transformers lỗi hoặc model chưa tải"
+  Nguyên nhân: transformers/torch chưa cài hoặc model đang tải xuống
+  Sửa:
+    - Kiểm tra virtualenv đã activate và cài dependencies (xem setup_and_install.txt)
+    - Chạy lệnh tiền tải model để xem lỗi: python -c "from transformers import pipeline; p=pipeline('text-generation', model='gpt2')"
+    - Nếu thiếu torch, cài torch theo BƯỚC 3 (CPU hoặc CUDA)
+
+VẤN ĐỀ: "Agent không nhận tiếng nói"
+  Nguyên nhân: Frontend chưa kết nối hoặc micro không hoạt động
+  Sửa:
+    - Kiểm tra Frontend có "Connected" không
+    - Kiểm tra micro máy tính có bật không (Settings → Sound)
+    - F12 → Console xem có lỗi không
+
+VẤN ĐỀ: "Trang web không tải"
+  Nguyên nhân: Frontend chưa chạy hoặc cổng 5173 bị chiếm
+  Sửa:
+    - Chắc chắn `npm run dev` đang chạy (Bước 3)
+    - Kiểm tra log có "Local: http://localhost:5173" không
+
+VẤN ĐỀ: "AI không trả lời"
+  Nguyên nhân: LLM chưa chạy hoặc model chưa tải
+  Sửa:
+    - Chắc chắn Ollama đang chạy
+    - Chạy: ollama pull llama3
+    - Chờ model tải xong (~5-10 phút)
+
+
+================================================================================
+TÓMO QUY TRÌNH CHẠYDỰ ÁN
+================================================================================
+
+LẦN ĐẦU:
+  1. uvicorn token_server:app --port 8000 (cửa sổ 1)
+  2. npm run dev (cửa sổ 2)
+  3. python agent.py --local-debug --sample sample.wav (cửa sổ 3)  # test nhanh
+  4. (tùy chọn) python agent.py --livekit  # chạy thật cho LiveKit
+  5. Mở http://localhost:5173
+  6. Nói gì đó
+
+LẦN SAU:
+  Chỉ cần chạy lại các lệnh trên (Ollama, Token Server, Frontend, Agent)
+
+ĐỂ DỪNG:
+  Nhấn Ctrl + C trên mỗi cửa sổ (ngược thứ tự cài)
+
+
+================================================================================
+TIẾP THEO
+================================================================================
+
+Nếu gặp vấn đề, hãy xem file "troubleshooting.txt"
+Muốn hiểu rõ hơn dự án, xem file "overview.txt"
+Muốn biết chi tiết từng phần, xem file "components.txt"
+
+================================================================================

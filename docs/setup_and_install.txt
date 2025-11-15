@@ -1,0 +1,234 @@
+================================================================================
+HƯỚNG DẪN CÀI ĐẶT DỰ ÁN (DÀNH CHO NGƯỜI MỚI)
+================================================================================
+
+Hướng dẫn này sẽ chỉ bạn từng bước cài đặt dự án. Nội dung được viết ngắn gọn,
+dễ hiểu và có lệnh mẫu để bạn chạy trên Windows PowerShell.
+
+
+BƯỚC 0: CHUẨN BỊ
+================================================================================
+
+Chuẩn bị những gì cần:
+  1. Một máy tính (Windows, Mac, hoặc Linux)
+  2. Trình duyệt web (Chrome, Firefox, Edge...)
+  3. Terminal / PowerShell (để chạy lệnh)
+  4. Internet (để tải các thư viện)
+
+
+BƯỚC 1: CÀI ĐẶT PYTHON
+================================================================================
+
+Python là ngôn ngữ lập trình dùng cho backend.
+
+CÀI ĐẶT PYTHON TRÊN WINDOWS:
+  1. Mở trình duyệt, truy cập: https://www.python.org/downloads/
+  2. Tải Python 3.11+ và cài đặt
+  3. Trong cửa sổ cài đặt: tích chọn "Add Python to PATH"
+
+KIỂM TRA:
+```powershell
+python --version
+```
+
+
+BƯỚC 2: CÀI ĐẶT NODE.JS (FRONTEND)
+================================================================================
+
+Node.js dùng để chạy frontend Vite app.
+
+CÀI ĐẶT NODE.JS:
+  1. Truy cập: https://nodejs.org/ và tải bản LTS
+  2. Cài đặt theo hướng dẫn
+
+KIỂM TRA:
+```powershell
+node --version
+npm --version
+```
+
+
+BƯỚC 3: CÀI ĐẶT LLM (Hugging Face Transformers + PyTorch)
+================================================================================
+
+Mục tiêu: Chạy mô hình LLM cục bộ bằng Hugging Face Transformers và PyTorch.
+
+LƯU Ý: Nếu bạn muốn dùng GPU, cần driver và CUDA tương thích. Dưới đây có
+lệnh ví dụ để cài PyTorch cho CUDA 12.8; nếu bạn không có GPU hoặc không cài
+được CUDA, dùng phần "CPU-only" thay vì lệnh CUDA.
+
+1) Tạo và kích hoạt môi trường ảo (khuyến nghị):
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+2) Cài PyTorch (CUDA 12.8) — nếu bạn có GPU tương thích:
+
+```powershell
+python -m ensurepip --upgrade
+python -m pip install --upgrade pip
+
+cái này cài theo gpu 
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+```
+
+3) Hoặc cài PyTorch CPU-only (an toàn cho mọi máy):
+
+```powershell
+pip install --upgrade pip
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+```
+
+4) Cài các thư viện dự án (transformers, faster-whisper cho STT, Coqui TTS, LiveKit SDK, v.v.):
+
+```powershell
+pip install transformers faster-whisper TTS livekit python-dotenv soundfile scipy requests
+```
+
+Ghi chú: Nếu pip báo xung đột, cài torch trước (bước 2/3), rồi cài phần còn lại.
+
+5) Kiểm tra cơ bản:
+
+```powershell
+python -c "import torch, transformers; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
+python -c "from transformers import pipeline; p=pipeline('text-generation', model='gpt2'); print(p('Hello', max_new_tokens=5))"
+```
+
+Nếu các lệnh in ra phiên bản và/hoặc văn bản sinh ra, thì LLM pipeline hoạt động.
+
+
+BƯỚC 4: CÀI ĐẶT THƯ VIỆN BACKEND (PYTHON)
+================================================================================
+
+BƯỚC 4.1: Tải code dự án
+```powershell
+cd d:\project\livekit\livekit-voice-demo
+dir
+```
+
+BƯỚC 4.2: Tạo môi trường ảo
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+BƯỚC 4.3: Kích hoạt môi trường ảo (nếu chưa kích hoạt)
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+BƯỚC 4.4: Cài đặt các thư viện từ requirements.txt
+```powershell
+cd backend
+pip install -r requirements.txt
+```
+
+Ghi chú: với torch bạn có thể cần chạy lệnh cài riêng (xem BƯỚC 3) trước khi
+chạy `pip install -r requirements.txt` để đảm bảo torch wheel tương thích được cài.
+
+KIỂM TRA CÀI ĐẶT:
+```powershell
+python -c "import livekit; print('livekit OK')"
+```
+
+
+BƯỚC 5: CÀI ĐẶT THƯ VIỆN FRONTEND (JAVASCRIPT)
+================================================================================
+
+```powershell
+cd d:\project\livekit\livekit-voice-demo\frontend
+npm install
+```
+
+
+BƯỚC 6: CẬP NHẬT TẬP TIN CẤU HÌNH (.env - BACKEND VÀ FRONTEND)
+================================================================================
+
+Bạn cần tạo 2 file `.env` riêng: một cho backend và một cho frontend.
+
+BƯỚC 6.1: Tạo file `.env` cho Backend
+```powershell
+cd d:\project\livekit\livekit-voice-demo\backend
+copy .env.example .env
+```
+
+BƯỚC 6.2: Chỉnh sửa file `backend/.env` bằng Notepad
+```powershell
+notepad .env
+```
+
+Thay đổi các giá trị sau với LiveKit credentials của bạn:
+```
+
+```
+
+BƯỚC 6.3: Tạo file `.env` cho Frontend
+```powershell
+cd d:\project\livekit\livekit-voice-demo\frontend
+copy .env.example .env
+```
+
+BƯỚC 6.4: Chỉnh sửa file `frontend/.env` bằng Notepad
+```powershell
+notepad .env
+```
+
+Thay đổi các giá trị với cùng LiveKit URL:
+```
+
+```
+
+LƯU Ý:
+  - File `.env` chứa credentials nhạy cảm, đừng share công khai
+  - Cả 2 file `backend/.env` và `frontend/.env` đã được thêm vào `.gitignore`
+  - Mỗi lần clone lại repo, cần tạo lại 2 file `.env` này
+
+
+================================================================================
+BƯỚC 7: KIỂM TRA TOÀN BỘ CÀI ĐẶT
+================================================================================
+
+1) Kiểm tra Python & Node:
+```powershell
+python --version
+node --version
+```
+
+2) Kiểm tra LLM pipeline (transformers + torch):
+```powershell
+python -c "import torch, transformers; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
+python -c "from transformers import pipeline; p=pipeline('text-generation', model='gpt2'); print(p('Hello, my name is', max_new_tokens=10))"
+```
+
+3) Kiểm tra thư viện Backend:
+```powershell
+cd backend
+python -c "import fastapi, livekit; print('backend libs OK')"
+```
+
+4) Kiểm tra frontend cài đặt:
+```powershell
+cd frontend
+npm list vite
+```
+
+
+================================================================================
+TÓM TẮT CÁC BƯỚC CƠ BẢN
+================================================================================
+
+1. Cài Python 3.11+ và Node.js LTS
+2. Tạo virtualenv và kích hoạt
+3. Cài PyTorch (CUDA 12.8 nếu có GPU) hoặc CPU-only
+4. Cài transformers + faster-whisper + Coqui TTS + livekit
+5. Cài frontend bằng `npm install`
+6. Tạo 2 file `.env` (backend/.env và frontend/.env) và cập nhật credentials
+7. Chạy kiểm tra
+
+
+================================================================================
+TIẾP THEO: HÃY XEM FILE "run_project.txt" ĐỂ BIẾT CÁCH CHẠY DỰ ÁN
+================================================================================
+

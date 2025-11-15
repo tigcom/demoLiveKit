@@ -1,0 +1,392 @@
+================================================================================
+CÁC LỖI PHỔ BIẾN VÀ CÁCH SỬA
+================================================================================
+
+Nếu gặp lỗi khi chạy dự án, hãy tìm trong file này.
+Mỗi vấn đề đều có cách sửa cụ thể.
+
+
+================================================================================
+LỖI LIÊN QUAN ĐẾN CÀI ĐẶT
+================================================================================
+
+LỖI 1: "Python is not installed" hoặc "python: command not found"
+  Nguyên nhân: Python chưa được cài hoặc không thêm vào PATH
+  
+  Cách sửa:
+    1. Kiểm tra Python đã cài chưa:
+       - Trên Windows: Mở Settings → Apps → Installed apps
+       - Tìm "Python" trong danh sách
+    
+    2. Nếu chưa có: Cài Python từ https://www.python.org/downloads/
+       - Nhớ check "Add Python to PATH"
+    
+    3. Sau khi cài xong: Mở Command Prompt mới, gõ:
+       python --version
+       
+       Nếu thấy "Python 3.11.xxx", là OK rồi
+
+
+LỖI 2: "Node is not installed" hoặc "node: command not found"
+  Nguyên nhân: Node.js chưa cài hoặc không thêm vào PATH
+  
+  Cách sửa:
+    1. Kiểm tra Node.js đã cài chưa:
+       - Trên Windows: Mở Settings → Apps → Installed apps
+       - Tìm "Node.js" trong danh sách
+    
+    2. Nếu chưa có: Cài Node.js từ https://nodejs.org/
+    
+    3. Sau khi cài xong: Mở Command Prompt mới, gõ:
+       node --version
+       npm --version
+       
+       Nếu thấy version số, là OK rồi
+
+
+LỖI 3: "ModuleNotFoundError: No module named 'livekit'"
+  Nguyên nhân: Thư viện LiveKit chưa cài hoặc virtual environment chưa kích hoạt
+  
+  Cách sửa:
+    1. Kiểm tra virtual environment đã kích hoạt chưa:
+       - Nhìn vào Command Prompt
+       - Nếu thấy "(.venv)" ở đầu dòng → OK
+       - Nếu không thấy → chạy: .venv\Scripts\activate
+    
+    2. Sau khi kích hoạt, cài lại:
+       pip install -r requirements.txt
+    
+    3. Nếu vẫn lỗi, thử:
+       pip install --upgrade pip
+       pip install livekit fastapi uvicorn faster-whisper
+
+
+LỖI 4: "No module named 'vite'" hoặc "vite: command not found"
+  Nguyên nhân: Thư viện frontend chưa cài
+  
+  Cách sửa:
+    1. Vào thư mục frontend:
+       cd d:\project\livekit\livekit-voice-demo\frontend
+    
+    2. Cài lại:
+       npm install
+    
+    3. Nếu vẫn lỗi, xóa node_modules rồi cài lại:
+       rmdir node_modules /s
+       npm install
+
+
+================================================================================
+LỖI LIÊN QUAN ĐẾN CHẠY DỰ ÁN
+================================================================================
+
+LỖI 5: "Port 8000 is already in use"
+  Nguyên nhân: Cổng 8000 đang bị dùng bởi chương trình khác
+  
+  Cách sửa - Cách 1 (thay cổng):
+    Vào token_server.py, tìm dòng:
+      uvicorn token_server:app --port 8000
+    
+    Thay thành:
+      uvicorn token_server:app --port 8001
+    
+    Rồi mở file .env ở thư mục backend:
+      Thay: TOKEN_SERVER_URL=http://localhost:8000
+      Thành: TOKEN_SERVER_URL=http://localhost:8001
+
+  Cách sửa - Cách 2 (tìm chương trình dùng cổng):
+    1. Mở Command Prompt as Administrator
+    2. Gõ:
+       netstat -ano | findstr :8000
+    
+    3. Bạn sẽ thấy một PID (số hiệu process)
+    4. Gõ:
+       taskkill /PID <PID> /F
+       
+       Thay <PID> bằng số bạn tìm được
+
+
+LỖI 6: "LLM/Transformers lỗi hoặc connection failed"
+  Nguyên nhân: transformers/torch chưa cài, model chưa tải, hoặc lỗi khi khởi tạo pipeline
+  
+  Cách sửa:
+    1. Kiểm tra virtualenv đã activate và dependencies đã cài:
+       pip install -r requirements.txt
+    2. Thử tiền tải model kiểm tra lỗi:
+       python -c "from transformers import pipeline; p=pipeline('text-generation', model='gpt2')"
+    3. Nếu có lỗi liên quan đến torch, cài torch phù hợp (xem docs/setup_and_install.txt)
+    4. Kiểm tra log Python để biết chi tiết lỗi (stacktrace)
+
+
+LỖI 7: "Model not found / download failed"
+  Nguyên nhân: Model Transformers chưa tải về hoặc không thể tải do mạng
+
+  Cách sửa:
+    1. Thử tiền tải model bằng lệnh:
+       python -c "from transformers import pipeline; p=pipeline('text-generation', model='gpt2')"
+    2. Nếu model lớn, chờ tải hoàn tất (có thể vài phút đến vài GB)
+    3. Nếu mạng chậm, hãy tải model trên mạng có băng thông tốt rồi di chuyển cache
+       (transformers dùng cache tại %USERPROFILE%/.cache/huggingface)
+
+
+LỖI 8: "Connection refused at localhost:5173"
+  Nguyên nhân: Frontend chưa chạy
+  
+  Cách sửa:
+    1. Mở Command Prompt mới
+    2. Vào thư mục frontend:
+       cd d:\project\livekit\livekit-voice-demo\frontend
+    
+    3. Chạy:
+       npm run dev
+    
+    4. Chờ đến khi thấy:
+       ➜  Local:   http://localhost:5173/
+    
+    5. Không đóng cửa sổ này
+
+
+LỖI 9: "Agent not connected to room"
+  Nguyên nhân: Token Server không chạy hoặc token không hợp lệ
+  
+  Cách sửa:
+    1. Kiểm tra Token Server có chạy không:
+       - Mở trình duyệt: http://localhost:8000/healthz
+       - Nếu thấy "OK", Token Server chạy OK
+    
+    2. Kiểm tra file .env:
+       - Mở file backend/.env
+       - Chắc chắn LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET đúng
+    
+    3. Nếu vẫn không OK, thử:
+       python agent.py --livekit
+       
+       Nhìn vào log, xem lỗi cụ thể gì
+
+
+================================================================================
+LỖI LIÊN QUAN ĐẾN ÂM THANH
+================================================================================
+
+LỖI 10: "Microphone not working"
+  Nguyên nhân: Micro máy tính bị tắt hoặc chưa cấp quyền truy cập
+  
+  Cách sửa:
+    1. Kiểm tra micro vật lý:
+       - Kiểm tra dây kết nối (nếu là micro ngoài)
+       - Kiểm tra Mute button trên micro
+    
+    2. Kiểm tra cài đặt Windows:
+       - Mở: Settings → Privacy & security → Microphone
+       - Bảo đảm microphone "ON"
+       - Bảo đảm trình duyệt có quyền truy cập micro
+    
+    3. Kiểm tra trình duyệt:
+       - Mở http://localhost:5173
+       - Trình duyệt sẽ hỏi: "Allow access to microphone?"
+       - Chọn "Allow"
+    
+    4. Nếu trình duyệt không hỏi, reset permissions:
+       - Chrome: Settings → Privacy → Site settings → Microphone
+       - Xóa localhost:5173
+       - Reload trang web
+
+
+LỖI 11: "No audio received from agent"
+  Nguyên nhân: Agent nhận tiếng nói nhưng không phát âm thanh trả lời
+  
+  Cách sửa:
+    1. Kiểm tra loa máy tính:
+       - Kiểm tra dây kết nối (nếu là loa ngoài)
+       - Kiểm tra mute button
+       - Kiểm tra âm lượng Windows (không phải 0%)
+    
+    2. Kiểm tra Chrome settings:
+       - Mở http://localhost:5173
+       - F12 → Console
+       - Tìm thông báo lỗi liên quan đến audio
+    
+    3. Kiểm tra STT/LLM/TTS hoạt động:
+       - Vào cửa sổ Agent
+       - Nói gì đó vào micro
+       - Kiểm tra log:
+         "🗣️ User said: ..."
+         "💬 Agent reply: ..."
+         "✓ Published audio track: ..."
+       
+       - Nếu thấy tất cả 3 dòng này, có nghĩa là STT/LLM/TTS OK
+       - Vấn đề là ở audio playback (phía frontend)
+
+
+================================================================================
+LỖI LIÊN QUAN ĐẾN XỬ LÝ TIẾNG NÓI
+================================================================================
+
+LỖI 12: "STT failed: No module named 'faster_whisper'"
+  Nguyên nhân: faster-whisper chưa cài
+  
+  Cách sửa:
+    pip install faster-whisper
+
+
+LỖI 13: "TTS failed: No module named 'TTS'"
+  Nguyên nhân: Coqui TTS chưa cài
+  
+  Cách sửa:
+    pip install TTS
+
+
+LỖI 14: "STT model downloading... (takes time)"
+  Nguyên nhân: Model STT đang tải lần đầu
+  
+  Cách sửa:
+    - Đây không phải lỗi, mà là tình trạng bình thường
+    - Lần đầu chạy, faster-whisper sẽ tải model (~500MB)
+    - Chờ khoảng 5-10 phút
+    - Lần sau sẽ nhanh hơn
+
+
+LỖI 15: "Agent reply is empty or stuttering"
+  Nguyên nhân: LLM pipeline trả về chuỗi rỗng, TTS gặp lỗi, hoặc audio I/O không ổn
+
+  Cách sửa:
+    1. Kiểm tra log Agent để xem bước nào bị lỗi (STT / LLM / TTS)
+    2. Kiểm tra LLM: chạy lệnh kiểm tra nhỏ để xác nhận pipeline hoạt động
+       python -c "from transformers import pipeline; p=pipeline('text-generation', model='gpt2'); print(p('test', max_new_tokens=10))"
+    3. Kiểm tra TTS: thử synthesize một đoạn văn đơn giản bằng test_pipeline.py
+       python test_pipeline.py --sample sample.wav --mock-llm
+    4. Nếu vẫn lỗi, thu thập log và thông báo chi tiết (traceback)
+
+
+================================================================================
+LỖI LIÊN QUAN ĐẾN KẾT NỐI
+================================================================================
+
+LỖI 16: "Connection to LiveKit failed"
+  Nguyên nhân: LiveKit URL không đúng hoặc token không hợp lệ
+  
+  Cách sửa:
+    1. Kiểm tra file .env:
+       - LIVEKIT_URL: Chắc chắn URL đúng
+       - LIVEKIT_API_KEY: Chắc chắn API key đúng
+       - LIVEKIT_API_SECRET: Chắc chắn API secret đúng
+    
+    2. Kiểm tra Token Server:
+       - Mở: http://localhost:8000/healthz
+       - Nếu không kết nối, chạy lại token server
+    
+    3. Test token:
+       - Gõ:
+         curl -X POST http://localhost:8000/api/get_token -H "Content-Type: application/json" -d "{\"room\":\"demo-room\",\"identity\":\"test-user\"}"
+       
+       - Nếu có phản hồi token, Token Server OK
+
+
+LỖI 17: "Frontend cannot find room"
+  Nguyên nhân: Room chưa tồn tại trên LiveKit
+  
+  Cách sửa:
+    1. Kiểm tra ROOM trong .env:
+       - Chắc chắn ROOM = "demo-room" (hoặc tên room khác)
+    
+    2. Nếu dùng LiveKit Cloud:
+       - Truy cập: https://cloud.livekit.io
+       - Đăng nhập với API key/secret
+       - Kiểm tra room có tồn tại không
+    
+    3. Nếu dùng LiveKit self-hosted:
+       - Kiểm tra LiveKit server có chạy không
+
+
+================================================================================
+LỖI LIÊN QUAN ĐẾN TẬP TIN
+================================================================================
+
+LỖI 18: "File not found: .env"
+  Nguyên nhân: File .env chưa tạo
+  
+  Cách sửa:
+    1. Vào thư mục backend:
+       cd d:\project\livekit\livekit-voice-demo\backend
+    
+    2. Tìm file .env.example
+    
+    3. Sao chép nó:
+       copy .env.example .env
+    
+    4. Mở file .env bằng Notepad
+    
+    5. Chỉnh sửa nếu cần
+    
+    6. Lưu file
+
+
+LỖI 19: "Permission denied" khi chạy python script
+  Nguyên nhân: Quyền truy cập file không đủ
+  
+  Cách sửa:
+    1. Mở Command Prompt as Administrator
+    2. Gõ lại lệnh:
+       python agent.py --livekit
+
+
+================================================================================
+LỖI HIẾM GẶP
+================================================================================
+
+LỖI 20: "ValueError: malformed node or string"
+  Nguyên nhân: File .env có ký tự đặc biệt hoặc định dạng sai
+  
+  Cách sửa:
+    1. Mở file .env bằng Notepad
+    2. Chắc chắn không có tab, chỉ có space
+    3. Mỗi dòng phải có định dạng: KEY=VALUE
+    4. Không có khoảng trắng xung quanh dấu =
+    5. Lưu file (save as UTF-8 nếu cần)
+
+
+LỖI 21: "RecursionError: maximum recursion depth exceeded"
+  Nguyên nhân: Code bị lặp vô hạn (rất hiếm)
+  
+  Cách sửa:
+    - Báo lỗi này cho team development
+    - Đây là lỗi code, không phải cài đặt
+
+
+================================================================================
+KHÔNG TÌM THẤY LỖI CỦA BẠN?
+================================================================================
+
+Nếu lỗi của bạn không có trong danh sách này, hãy:
+
+1. Kiểm tra lại tất cả bước cài đặt (xem setup_and_install.txt)
+
+2. Dừng tất cả chương trình, mở Command Prompt mới, chạy lại từ đầu
+
+3. Kiểm tra các log:
+   - Cửa sổ Ollama: Có lỗi gì không?
+   - Cửa sổ Token Server: Có lỗi gì không?
+   - Cửa sổ Frontend: Có lỗi gì không?
+   - Cửa sổ Agent: Có lỗi gì không?
+   - Browser Console (F12): Có lỗi gì không?
+
+
+4. Nếu vẫn không giải quyết được:
+   - Ghi lại thông báo lỗi chính xác
+   - Ghi lại những bước bạn đã thực hiện
+   - Kiểm tra các log liên quan: Token Server, Frontend, Agent
+   - Nếu cần, gửi log cho team development
+
+================================================================================
+GỢI Ý: TỨC ĐƠNGIẢN HÓA TRỨ TRỨ CHI
+================================================================================
+
+Nếu gặp quá nhiều lỗi, hãy thử cách đơn giản:
+
+1. Xóa thư mục backend/.venv
+2. Xóa thư mục frontend/node_modules
+3. Cài đặt lại từ đầu (xem setup_and_install.txt)
+
+Điều này giúp "reset" lại toàn bộ cài đặt.
+
+================================================================================

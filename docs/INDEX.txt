@@ -1,0 +1,167 @@
+================================================================================
+BẢNG CHỈ MỤC TÀI LIỆU - HƯỚNG DẪN ĐỌC
+================================================================================
+
+Chào mừng bạn đến với dự án LiveKit Voice Agent!
+
+File này giúp bạn biết nên đọc tài liệu nào trước khi cài đặt và chạy dự án.
+
+
+================================================================================
+BẠN MUỐN LÀM GÌ? HÃY CHỌN ĐƯỜNG DẪN CỦA BẠN
+================================================================================
+
+🎯 TRƯỜNG HỢP 1: TÔI LẦN ĐẦU TIÊN BIẾT VỀ DỰ ÁN NÀY
+
+Bạn cần hiểu tổng quan trước khi cài đặt.
+
+Hành động:
+  1. Đọc: docs/overview.txt (10 phút)
+     → Hiểu hệ thống và luồng STT → LLM → TTS
+  2. Đọc: docs/components.txt (15 phút)
+     → Chi tiết từng phần và giao tiếp giữa chúng
+  3. Sau đó đọc docs/setup_and_install.txt để cài đặt
+
+
+🎯 TRƯỜNG HỢP 2: TÔI SẼ CÀI ĐẶT DỰ ÁN
+
+Bạn chưa cài đặt gì, cần hướng dẫn chi tiết.
+
+Hành động:
+  1. Đọc: docs/setup_and_install.txt (20-30 phút)
+     → Cài Python, Node.js, PyTorch/Transformers, faster-whisper, Coqui TTS
+     → Cài thư viện backend và frontend
+     → Tạo file .env
+  2. Rồi đọc docs/run_project.txt để khởi chạy
+
+
+🎯 TRƯỜNG HỢP 3: TÔI ĐÃ CÀI XONG, MUỐN CHẠY
+
+Bạn đã cài xong, giờ muốn chạy và kiểm thử.
+
+Hành động:
+  1. Đọc: docs/run_project.txt (15-20 phút)
+     → Khởi động Token Server
+     → Khởi động Frontend
+     → Khởi động Backend Agent (local-debug hoặc LiveKit)
+     → Test tính năng (STT → LLM → TTS)
+  2. Mở http://localhost:5173
+  3. Thực hành: Join Room, nói và nghe AI trả lời
+
+
+🎯 TRƯỜNG HỢP 4: TÔI GẶP LỖI KHI CHẠY
+
+Hành động:
+  1. Đọc: docs/troubleshooting.txt để tìm lỗi và cách sửa
+  2. Nếu cần, thử xóa .venv (backend) và node_modules (frontend) rồi cài lại
+  3. Nếu vẫn không được, thu thập log và liên hệ người phát triển
+
+
+🎯 TRƯỜNG HỢP 5: TÔI MUỐN HIỂU CHI TIẾT KỸ THUẬT
+
+Hành động:
+  1. Đọc: docs/components.txt (chi tiết từng phần)
+  2. Xem mã nguồn trong thư mục `backend/` và `frontend/`
+
+
+================================================================================
+CHỈ MỤC FILE TÀI LIỆU
+================================================================================
+
+File                          Nội dung                           Dành cho ai
+────────────────────────────────────────────────────────────────────────────
+
+📄 README.txt                 Giới thiệu nhanh                    Mọi người
+
+docs/overview.txt            Giới thiệu hệ thống,                Người mới
+                             luồng STT → LLM → TTS
+
+docs/components.txt          Giải thích từng thành phần           Người muốn
+                                                                  hiểu kỹ
+
+docs/setup_and_install.txt   Hướng dẫn cài đặt chi tiết           Người chưa
+                                                                  cài gì
+
+docs/run_project.txt         Hướng dẫn chạy, kiểm tra            Người đã
+                                                                  cài xong
+
+docs/troubleshooting.txt     Danh sách lỗi & cách sửa            Người gặp
+                                                                  lỗi
+
+
+================================================================================
+THỨ TỰ ĐỌC ĐƯỢC KHUYẾN NGHỊ
+================================================================================
+
+Nếu bạn muốn chạy nhanh nhất:
+  1. docs/setup_and_install.txt
+  2. docs/run_project.txt
+  3. Chạy!
+
+Nếu bạn muốn hiểu kỹ:
+  1. docs/overview.txt
+  2. docs/components.txt
+  3. docs/setup_and_install.txt
+  4. docs/run_project.txt
+  5. Xem code trong backend/ và frontend/
+  6. Chạy!
+
+Nếu bạn gặp lỗi:
+  1. docs/troubleshooting.txt
+  2. Tìm lỗi của bạn
+  3. Sửa theo hướng dẫn
+  4. Chạy lại!
+
+
+================================================================================
+NHỮNG CÂU HỎI THƯỜNG GẶP NHANH
+================================================================================
+
+Q: Tôi bắt đầu từ đâu?
+A: Đọc docs/overview.txt, rồi docs/setup_and_install.txt
+
+Q: Làm sao để chạy dự án?
+A: Đọc docs/run_project.txt và làm theo từng bước
+
+Q: Gặp lỗi, sao bây giờ?
+A: Đọc docs/troubleshooting.txt, tìm lỗi bạn, sửa
+
+Q: Dự án này làm cái gì?
+A: Đọc docs/overview.txt
+
+Q: Cần cài những gì?
+A: Đọc docs/setup_and_install.txt
+
+
+================================================================================
+TÓM TẮT NHANH
+================================================================================
+
+Dự án: AI voice agent — pipeline STT → LLM → TTS (gọi thoại trong LiveKit)
+
+Cài đặt chính:
+  - Python 3.11+
+  - Node.js LTS
+  - PyTorch + Transformers (thay vì Ollama)
+
+Chạy (ví dụ):
+  - Terminal 1: uvicorn token_server:app --port 8000
+  - Terminal 2: cd frontend && npm run dev
+  - Terminal 3: cd backend && python agent.py --local-debug --sample sample.wav
+
+Sử dụng:
+  - Mở: http://localhost:5173
+  - Bấm: "Join Room"
+  - Nói: Nói gì đó vào micro
+  - Nghe: AI trả lời
+
+
+================================================================================
+BƯỚC TIẾP THEO
+================================================================================
+
+Chọn một trường hợp ở trên và bắt đầu với file tài liệu được đề xuất.
+
+Chúc bạn thành công! 🚀
+
+================================================================================

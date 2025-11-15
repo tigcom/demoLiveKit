@@ -1,0 +1,321 @@
+================================================================================
+CÁC THÀNH PHẦN CỦA DỰ ÁN: GIẢI THÍCH CHI TIẾT
+================================================================================
+
+DỰ ÁN CÓ 4 THÀNH PHẦN CHÍNH
+================================================================================
+
+1️⃣ FRONTEND (Trang web mà bạn dùng)
+2️⃣ TOKEN SERVER (Bộ phận cấp vé truy cập)
+3️⃣ BACKEND AGENT (Bộ não AI)
+4️⃣ EXTERNAL SERVICES (Các công cụ hỗ trợ)
+
+Bây giờ, chúng ta sẽ giải thích từng cái một cách dễ hiểu.
+
+
+================================================================================
+1️⃣ FRONTEND (TRANG WEB MÀ BẠN DÙNG)
+================================================================================
+
+FRONTEND LÀ CÁI GÌ?
+  Frontend là trang web mở trên trình duyệt (Chrome, Firefox, Edge...)
+  Nó là giao diện mà bạn nhìn thấy và tương tác hàng ngày.
+
+FRONTEND CÓ NHỮNG CHỨC NĂNG NÀO?
+  ✓ Hiển thị một nút "Nói" để bạn bấm
+  ✓ Bắt đầu ghi âm khi bạn nói
+  ✓ Gửi tiếng nói của bạn lên server
+  ✓ Nhận tiếng nói trả lời từ server
+  ✓ Phát tiếng nói trả lời qua loa
+  ✓ Hiển thị trạng thái kết nối (đã nối hay chưa)
+
+NHỮNG FILE TRONG FRONTEND
+  ├─ index.html
+  │  └─ File HTML, định nghĩa giao diện (nút, hộp...)
+  │
+  ├─ src/main.js
+  │  └─ File JavaScript, xử lý logic (nghe nó nói gì, nói lại cái gì...)
+  │
+  ├─ src/style.css
+  │  └─ File CSS, trang trí màu sắc, kích thước, layout
+  │
+  ├─ package.json
+  │  └─ File danh sách các thư viện cần dùng
+  │
+  └─ vite.config.js
+     └─ File cấu hình Vite (công cụ tạo web)
+
+FRONTEND HOẠT ĐỘNG NHƯ THẾ NÀO?
+  BƯỚC 1: Bạn mở trang web trên trình duyệt
+  BƯỚC 2: Frontend tự động kết nối đến token server để xin vé (access token)
+  BƯỚC 3: Frontend lấy được vé, rồi kết nối đến backend agent
+  BƯỚC 4: Khi bạn bấm nút "Nói", micro được kích hoạt
+  BƯỚC 5: Frontend ghi âm tiếng nói của bạn
+  BƯỚC 6: Gửi âm thanh đó lên backend agent
+  BƯỚC 7: Chờ backend trả lời
+  BƯỚC 8: Nhận tiếng nói AI trả lời từ backend
+  BƯỚC 9: Phát tiếng nói đó qua loa của máy tính
+  BƯỚC 10: Lặp lại bước 4-9 cho câu hỏi tiếp theo
+
+FRONTEND DÙNG NHỮNG CÔNG CỤ NÀO?
+  - HTML: Tạo các phần tử giao diện (nút, hộp...)
+  - CSS: Trang trí, màu sắc, kích thước
+  - JavaScript: Lập trình logic, xử lý sự kiện
+  - Vite: Công cụ giúp tạo trang web nhanh
+  - livekit-client: Thư viện kết nối âm thanh/video
+
+
+================================================================================
+2️⃣ TOKEN SERVER (BỘ PHẬN CẤP VÉ TRUY CẬP)
+================================================================================
+
+TOKEN SERVER LÀ CÁI GÌ?
+  Token server là một máy chủ web nhỏ, chạy riêng lẻ.
+  Công việc duy nhất của nó là: Cấp "vé truy cập" cho frontend.
+  
+  Vé này giống như vé vào sân vận động:
+    - Nếu không có vé, bạn không vào được sân
+    - Nếu có vé, bạn được phép vào
+    - Vé có hiệu lực nhất định thời gian, rồi hết hạn
+
+TẠII SAO CẦN TOKEN SERVER?
+  ✓ Bảo mật: Không phải ai cũng được phép kết nối
+  ✓ Quản lý: Biết được ai đang dùng hệ thống
+  ✓ Kiểm soát: Có thể tắt quyền truy cập nếu cần
+  ✓ Định danh: Biết bạn là ai (user-1, user-2...)
+
+TOKEN SERVER HOẠT ĐỘNG NHƯ THẾ NÀO?
+  
+  Workflow:
+  
+  Frontend                      Token Server
+    │                                │
+    │ "Xin vé truy cập"             │
+    ├──────────────────────────────►│
+    │                          (kiểm tra, tạo vé)
+    │                                │
+    │ "Vé của bạn"                  │
+    │◄──────────────────────────────┤
+    │                                │
+
+NHỮNG FILE TRONG TOKEN SERVER
+  └─ token_server.py
+     └─ File Python, chứa logic cấp vé
+     └─ Chạy trên cổng 8000
+
+TOKEN SERVER DÙNG NHỮNG CÔNG CỤ NÀO?
+  - FastAPI: Framework tạo API (máy chủ web)
+  - Python: Ngôn ngữ lập trình
+  - LiveKit SDK: Thư viện tạo vé
+
+
+================================================================================
+3️⃣ BACKEND AGENT (BỘ NÃO CỦA AI)
+================================================================================
+
+BACKEND AGENT LÀ CÁI GÌ?
+  Backend agent là bộ não của AI.
+  Nó không phải là một giao diện đẹp, mà là một chương trình chạy ngầm.
+  Công việc của nó:
+    - Nhận tiếng nói từ frontend
+    - Xử lý tiếng nói (chuyển thành chữ, hỏi AI, chuyển thành tiếng nói)
+    - Gửi tiếng nói trả lời lại cho frontend
+
+BACKEND AGENT HOẠT ĐỘNG NHƯ THẾ NÀO?
+
+  Frontend sends audio
+        │
+        ▼
+  Backend Agent
+        │
+        ├─→ BƯỚC 1: Nhận tiếng nói
+        │
+        ├─→ BƯỚC 2: Chuyển tiếng nói thành chữ
+        │           (gọi STT - Speech to Text)
+        │           "Hôm nay thời tiết như thế nào?"
+        │
+        ├─→ BƯỚC 3: Gửi câu hỏi đến AI (LLM)
+        │           Input: "Hôm nay thời tiết như thế nào?"
+        │
+        ├─→ BƯỚC 4: AI suy nghĩ, tìm câu trả lời
+        │           Output: "Hôm nay trời đẹp, nắng, 28 độ"
+        │
+        ├─→ BƯỚC 5: Chuyển câu trả lời thành tiếng nói
+        │           (gọi TTS - Text to Speech)
+        │           Tạo file âm thanh từ chữ
+        │
+        ├─→ BƯỚC 6: Gửi file âm thanh về cho frontend
+        │
+        ▼
+  Frontend receives audio → phát qua loa
+
+CÁC PHẦN TRONG BACKEND AGENT
+
+  1. agent.py (Chương trình chính)
+     ├─ Kết nối đến backend livekit
+     ├─ Nhận âm thanh từ frontend
+     ├─ Gọi STT để chuyển thành chữ
+     ├─ Gọi LLM để tìm câu trả lời
+     ├─ Gọi TTS để chuyển thành tiếng nói
+     └─ Gửi âm thanh trả lời lại cho frontend
+
+  2. audio_utils.py (Công cụ xử lý âm thanh)
+     ├─ Chuyển đổi tốc độ âm thanh (từ 16kHz → 48kHz, ví dụ)
+     ├─ Kiểm tra âm thanh có đúng định dạng không
+     └─ Đảm bảo âm thanh có thể sử dụng được
+
+  3. audio_source.py (Công cụ phát âm thanh)
+     ├─ Tải file âm thanh
+     ├─ Chia nhỏ file thành những mảnh nhỏ (20ms mỗi mảnh)
+     └─ Gửi từng mảnh một cách có thứ tự
+
+  4. test_pipeline.py (Công cụ test, kiểm tra)
+     ├─ Test riêng lẻ từng phần (STT, LLM, TTS)
+     └─ Dùng khi muốn debug (tìm lỗi)
+
+  5. requirements.txt (Danh sách thư viện)
+     └─ Liệt kê tất cả các thư viện cần cài đặt
+
+BACKEND AGENT DÙNG NHỮNG CÔNG CỤ NÀO?
+  - Python: Ngôn ngExterna lập trình
+  - LiveKit SDK: Kết nối đến backend
+  - faster-whisper: STT (chuyển tiếng nói thành chữ)
+  - Hugging Face Transformers + PyTorch: LLM (chạy mô hình ngôn ngữ cục bộ)
+  - Coqui TTS: TTS (chuyển chữ thành tiếng nói)
+  - FastAPI: Tạo API
+
+
+================================================================================
+4️⃣ EXTERNAL SERVICES (CÁC CÔNG CỤ HỖ TRỢ)
+================================================================================
+
+NHỮNG CÔNG CỤ NGOÀI CẦN CHUẨN BỊ
+
+  1. STT (Speech to Text) - Nghe tiếng nói, hiểu thành chữ
+     Dùng: faster-whisper
+     Công dụng: Chuyển tiếng nói → chữ
+     Cài đặt: Tự động (qua pip install)
+     Model: Tải về khi lần đầu chạy
+     
+  2. LLM (Large Language Model) - AI thực sự, suy nghĩ
+    Dùng: Hugging Face Transformers + PyTorch (các model HF)
+    Công dụng: Sinh câu trả lời từ input (tùy model bạn chọn)
+    Cài đặt: Cài `torch` và `transformers` qua pip; mô hình sẽ tải khi pipeline được khởi tạo
+    Model: Chỉ định `MODEL_NAME_LLM` trong `.env` hoặc để mặc định `gpt2` để test
+     
+  3. TTS (Text to Speech) - Chuyển chữ thành tiếng nói
+     Dùng: Coqui TTS
+     Công dụng: Chuyển chữ → tiếng nói
+     Cài đặt: Tự động (qua pip install)
+     Model: Tải về khi lần đầu chạy
+
+
+NHỮNG CÔNG CỤ KHÁC
+
+  1. LiveKit Server
+     Công dụng: Máy chủ trung tâm để frontend và backend kết nối với nhau
+     Nó giống như một "trạm gửi-nhận" tiếng nói
+     Có thể: Cài trên máy tính của bạn, hoặc dùng cloud.livekit.io
+     
+  2. Python
+     Công dụng: Ngôn ngữ lập trình để viết backend
+     Cần: Phiên bản 3.9 trở lên
+     
+  3. Node.js
+     Công dụng: Ngôn ngữ lập trình để chạy frontend
+     Cần: Phiên bản 16 trở lên
+
+
+================================================================================
+CÁCH CÁC THÀNH PHẦN GIAO TIẾP VỚI NHAU
+================================================================================
+
+Sơ đồ tổng quát:
+
+                    ┌──────────────┐
+                    │  LiveKit     │
+                    │  Server      │
+                    └──────┬───────┘
+                           │
+          ┌────────────────┼────────────────┐
+          │                │                │
+          ▼                ▼                ▼
+       Frontend        Token Server     Backend Agent
+       (Web UI)        (Port 8000)       (Python)
+          │                │                │
+          │ 1. Xin vé      │                │
+          ├───────────────►│                │
+          │                │ 2. Tạo vé      │
+          │ 3. Nhận vé     │                │
+          │◄───────────────┤                │
+          │                                 │
+          │ 4. Gửi tiếng nói                │
+          ├────────────────────────────────►│
+          │                                 │
+          │                 5. STT (chuyển thành chữ)
+          │                 6. LLM (suy nghĩ)
+          │                 7. TTS (chuyển thành tiếng)
+          │                                 │
+          │ 8. Nhận tiếng nói trả lời        │
+          │◄────────────────────────────────┤
+          │                                 │
+          │ 9. Phát âm thanh                │
+
+
+LỰC CÁC KẾT NỐI
+
+  Frontend ←→ LiveKit Server:
+    - Gửi tiếng nói của người dùng
+    - Nhận tiếng nói AI trả lời
+    
+  Frontend ← → Token Server:
+    - Xin vé truy cập (access token)
+    - Giúp xác thực yêu cầu
+    
+  Backend Agent ←→ LiveKit Server:
+    - Nhận tiếng nói từ frontend
+    - Gửi tiếng nói trả lời cho frontend
+    
+  Backend Agent ←→ STT (faster-whisper):
+    - Gửi file âm thanh
+    - Nhận lại đoạn chữ (transcription)
+    
+  Backend Agent ←→ LLM (Transformers):
+    - Gửi câu hỏi (text)
+    - Nhận lại câu trả lời (text) do pipeline sinh ra
+    
+  Backend Agent ←→ TTS (Coqui):
+    - Gửi đoạn chữ
+    - Nhận lại file âm thanh
+
+
+================================================================================
+TÓM TẮT NHIỆM VỤ CỦA TỪNG THÀNH PHẦN
+================================================================================
+
+FRONTEND:
+  ✓ Hiển thị giao diện cho người dùng
+  ✓ Ghi âm tiếng nói
+  ✓ Gửi tiếng nói lên backend
+  ✓ Nhận tiếng nói trả lời
+  ✓ Phát âm thanh
+
+TOKEN SERVER:
+  ✓ Cấp vé truy cập (access token)
+  ✓ Xác thực người dùng
+
+BACKEND AGENT:
+  ✓ Nhận tiếng nói từ frontend
+  ✓ Chuyển tiếng nói → chữ (STT)
+  ✓ Gửi câu hỏi → AI (LLM)
+  ✓ Chuyển câu trả lời → tiếng nói (TTS)
+  ✓ Gửi tiếng nói trả lời cho frontend
+
+EXTERNAL SERVICES:
+  ✓ STT: Chuyển đổi tiếng nói
+  ✓ LLM: Suy nghĩ, tìm câu trả lời
+  ✓ TTS: Chuyển đổi chữ thành tiếng nói
+
+================================================================================
+Để biết cách cài đặt, hãy xem file "setup_and_install.txt"
+================================================================================

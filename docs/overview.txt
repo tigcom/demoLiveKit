@@ -1,0 +1,166 @@
+================================================================================
+GIỚI THIỆU DỰ ÁN: HỆ THỐNG CHATBOT NÓI ĐƯỢC (AI VOICE AGENT)
+================================================================================
+
+DỰ ÁN LÀM CÁI GÌ?
+================================================================================
+Đây là một hệ thống cho phép bạn:
+  1. Nói với một AI (qua micro máy tính)
+  2. AI sẽ nghe được lời nói của bạn
+  3. AI sẽ suy nghĩ và tìm câu trả lời
+  4. AI sẽ nói lại câu trả lời cho bạn
+  5. Tất cả xảy ra qua internet, bạn không cần gọi điện thoại
+
+Nó hoạt động giống như ChatGPT nhưng thay vì bạn gõ chữ, bạn nói bằng miệng.
+Thay vì đọc chữ, bạn nghe AI nói lại.
+
+
+NHỮNG PHẦN CHÍNH CỦA DỰ ÁN
+================================================================================
+
+1. FRONTEND (Cái giao diện mà bạn dùng)
+   ├─ Một trang web đơn giản
+   ├─ Có nút "Nói" để kích hoạt micro
+   ├─ Hiển thị trạng thái kết nối
+   └─ Phát âm thanh AI trả lời
+
+2. TOKEN SERVER (Bộ phận xác thực)
+   ├─ Cấp "vé truy cập" cho frontend
+   ├─ Giống như vé vào sân vận động
+   ├─ Không vé này, frontend không thể kết nối được
+   └─ Chạy riêng trên cổng 8000
+
+3. BACKEND AGENT (Bộ não của AI)
+   ├─ Nhận tiếng nói từ frontend
+   ├─ Chuyển tiếng nói thành chữ (STT)
+   ├─ Gửi chữ đó cho AI để trả lời (LLM)
+   ├─ Chuyển câu trả lời thành tiếng nói (TTS)
+   └─ Gửi tiếng nói trả lời lại cho frontend
+
+4. CÁCH GIAO TIẾP GIỮA CÁC PHẦN
+   ├─ Frontend ←→ Token Server (xin vé)
+   ├─ Frontend ←→ Backend (gửi/nhận tiếng nói)
+   └─ Backend ←→ AI models (STT, LLM, TTS)
+
+
+LUỒNG HOẠT ĐỘNG CHI TIẾT (CÁCH AI TRẢ LỜI)
+================================================================================
+
+BƯỚC 1: BẠN NÓI LỜI HỎI
+  └─ Bạn bấm nút "Nói" trên website
+  └─ Micro bắt đầu ghi âm tiếng nói của bạn
+  └─ Âm thanh được gửi lên server
+
+BƯỚC 2: SERVER NHẬN VÀ CHUYỂN ĐỔI
+  └─ Backend agent nhận được âm thanh từ bạn
+  └─ Chuyển âm thanh đó thành dạng máy tính hiểu được (WAV format)
+  └─ Gửi đến mô hình STT (Speech to Text)
+
+BƯỚC 3: CHUYỂN TIẾNG NÓI THÀNH CHỮ
+  └─ STT là công cụ chuyên chuyển tiếng nói thành chữ
+  └─ Ví dụ: Tiếng nói "Chào bạn" → Chữ "Chào bạn"
+  └─ Kết quả là một đoạn chữ mà AI có thể hiểu
+
+BƯỚC 4: AI SẮC DẬU TÌM CÂUM TRẢ LỜI
+  └─ Đoạn chữ được gửi tới LLM (Large Language Model - mô hình AI lớn)
+  └─ LLM là AI thực sự suy nghĩ và tìm câu trả lời
+  └─ Ví dụ: Input "Chào bạn" → Output "Chào, tôi khỏe, bạn thế nào?"
+
+BƯỚC 5: CHUYỂN CHỮ THÀNH TIẾNG NÓI
+  └─ Câu trả lời được gửi đến TTS (Text to Speech)
+  └─ TTS là công cụ chuyên chuyển chữ thành tiếng nói
+  └─ Ví dụ: Chữ "Chào, tôi khỏe, bạn thế nào?" → Tiếng nói (file âm thanh)
+  └─ Tiếng nói này được tạo như một bản ghi âm, nghe rất tự nhiên
+
+BƯỚC 6: GỬI TIẾNG NÓI TRỞ LẠI CHO BẠN
+  └─ File âm thanh trả lời được gửi về server của bạn
+  └─ Frontend nhận được và phát âm thanh qua loa
+  └─ Bạn nghe được câu trả lời của AI!
+
+
+NHỮNG CÔNG CỤ CHỈ ĐỊNH DÙNG
+================================================================================
+
+Frontend dùng:
+  - Vite (công cụ giúp tạo trang web nhanh)
+  - JavaScript (ngôn ngữ lập trình)
+  - LiveKit Client (thư viện kết nối âm thanh/video)
+
+Backend dùng:
+  - Python (ngôn ngữ lập trình)
+  - FastAPI (framework tạo API)
+  - faster-whisper (STT - nghe tiếng nói, hiểu thành chữ)
+  - Hugging Face Transformers + PyTorch (LLM - chạy mô hình sinh văn bản cục bộ)
+  - Coqui TTS (TTS - chuyển chữ thành tiếng nói)
+
+Nếu chưa có các công cụ này, bạn cần cài đặt. Phần hướng dẫn cài đặt ở file
+"setup_and_install.txt".
+
+
+TẠI SAO CẦN CÁC CÔNG CỤ NÀY?
+================================================================================
+
+STT (faster-whisper):
+  Mục đích: Nghe tiếng nói, hiểu thành chữ
+  Tính năng: Có thể hiểu được tiếng Anh, Tiếng Việt, và nhiều ngôn ngữ khác
+  Lợi ích: Chạy riêng trên máy tính của bạn, không cần internet ngoài
+
+LLM (Hugging Face Transformers):
+  Mục đích: AI thực sự - nhận câu hỏi, sinh câu trả lời bằng mô hình ngôn ngữ
+  Tính năng: Có thể trả lời nhiều loại câu hỏi tùy mô hình bạn chọn
+  Lợi ích: Chạy cục bộ (nếu có phần cứng phù hợp) bằng Transformers + PyTorch
+
+TTS (Coqui TTS):
+  Mục đích: Chuyển chữ thành tiếng nói tự nhiên
+  Tính năng: Giọng nói rõ ràng, nghe chứng thực
+  Lợi ích: Chạy riêng trên máy tính của bạn, không cần dịch vụ ngoài
+
+
+CÁCH MÀ TẤT CẢ KẾT NỐI VỚI NHAU
+================================================================================
+
+     Bạn
+      │
+      │ (bạn nói qua micro)
+      ▼
+   Frontend
+   (trang web trên trình duyệt)
+      │
+      ├─→ Token Server
+      │   (xin vé truy cập)
+      │   ↓ (nhận vé)
+      │
+      ├─→ Backend Agent ←→ STT ←→ LLM ←→ TTS
+      │                   (nghe  (suy  (nói
+      │                    thôi)  nghĩ) lại)
+      │
+      └─← (nhận tiếng AI phản hồi)
+      ▼
+     Bạn
+   (nghe phản hồi qua loa)
+
+
+TÓMO TẮT
+================================================================================
+Hệ thống này tạo một "cuộc trò chuyện" giữa bạn và AI:
+
+  Bạn: [Nói qua micro] "Chào bạn!"
+  AI:  [Suy nghĩ] ...
+  AI:  [Nói lại] "Chào, tôi là AI. Có gì tôi giúp bạn?"
+  
+Tất cả điều này xảy ra trong vòng vài giây, hoàn toàn tự động.
+
+
+TẠI SAO ĐIỀU NÀY HỮU DỤNG?
+================================================================================
+✓ Không cần gõ phím, chỉ cần nói
+✓ Tự động cách ly audio với nhau
+✓ Hỗ trợ nhiều người nói cùng lúc
+✓ Có thể chạy offline (không cần internet quốc tế)
+✓ Bảo mật cao (không gửi dữ liệu lên máy chủ bên ngoài)
+
+================================================================================
+Để hiểu rõ hơn từng phần, hãy xem file "components.txt"
+Để cài đặt dự án, hãy xem file "setup_and_install.txt"
+Để chạy dự án, hãy xem file "run_project.txt"
+================================================================================
