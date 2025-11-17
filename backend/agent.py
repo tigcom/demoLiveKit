@@ -1,697 +1,617 @@
-"""agent.py
+# agent_greeting.py
 
-LiveKit Voice Assistant Agent
-
-Behavior:
-  - Connects to a LiveKit room as a participant (agent-{id}).
-  - Subscribes to audio tracks from other participants.
-  - For each user audio:
-    1. Buffers incoming audio frames.
-    2. Transcribes to text (faster-whisper).
-    3. Queries LLM (Hugging Face Transformers locally via PyTorch).
-    4. Synthesizes reply (Coqui TTS).
-    5. Publishes reply audio as a continuous track.
-
-Flows:
-  - WebRTC: Full connection to LiveKit with audio I/O (recommended).
-  - Local debug: Test STT/LLM/TTS pipeline without LiveKit.
-
-Environment:
-  LIVEKIT_URL           (e.g., https://cloud.livekit.io)
-  LIVEKIT_API_KEY       (for generating token)
-  LIVEKIT_API_SECRET    (for generating token)
-  ROOM                  (room name to join, default: demo-room)
-  AGENT_ID              (identity for agent participant, default: agent-1)
-    MODEL_NAME_LLM        (Hugging Face model id, default: gpt2)
-    DEVICE                ('auto'|'cuda'|'cpu') device selection for PyTorch
-  TOKEN_SERVER_URL      (default: http://localhost:8000)
-
-CLI Usage:
-  python agent.py --livekit         # Connect to LiveKit room
-  python agent.py --local-debug     # Test STT/LLM/TTS without LiveKit
-"""
 import os
 import sys
 import asyncio
 import logging
 import argparse
 import tempfile
+import shutil
+import uuid
+import json
+import struct
 import threading
-import queue
 from pathlib import Path
-from typing import Optional
+from collections import deque
 from dotenv import load_dotenv
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# Environment
 LIVEKIT_URL = os.getenv("LIVEKIT_URL", "https://cloud.livekit.io")
 LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY")
 LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
 ROOM = os.getenv("ROOM", "demo-room")
 AGENT_ID = os.getenv("AGENT_ID", "agent-1")
-MODEL_NAME_LLM = os.getenv("MODEL_NAME_LLM", "gpt2")  # change to a chat-capable HF model if you want
-DEVICE = os.getenv("DEVICE", "auto")  # 'cuda', 'cpu', or 'auto'
+MODEL_NAME_LLM = os.getenv("MODEL_NAME_LLM", "gpt2")
+DEVICE = os.getenv("DEVICE", "auto")
 TOKEN_SERVER_URL = os.getenv("TOKEN_SERVER_URL", "http://localhost:8000")
 
-# Lazy-loaded models
 _stt_model = None
 _tts = None
 _llm_pipe = None
 
-
+# -------------------- Lazy-load models --------------------
 def get_stt_model():
-    """Lazy load faster-whisper model."""
     global _stt_model
     if _stt_model is None:
-        try:
-            from faster_whisper import WhisperModel
-            logger.info("Loading faster-whisper model (tiny)...")
-            _stt_model = WhisperModel("tiny")
-            logger.info("✓ faster-whisper model loaded")
-        except ImportError:
-            logger.error("faster-whisper not installed. Install: pip install faster-whisper")
-            raise
+        from faster_whisper import WhisperModel
+        logger.info("Loading faster-whisper model...")
+        _stt_model = WhisperModel("tiny")
     return _stt_model
 
-
 def get_tts():
-    """Lazy load Coqui TTS."""
     global _tts
     if _tts is None:
-        try:
-            from TTS.api import TTS
-            logger.info("Loading Coqui TTS model...")
-            _tts = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC", progress_bar=True, gpu=False)
-            logger.info("✓ Coqui TTS model loaded")
-        except ImportError:
-            logger.error("TTS (Coqui) not installed. Install: pip install TTS")
-            raise
+        from TTS.api import TTS
+        logger.info("Loading Coqui TTS model...")
+        _tts = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC", progress_bar=True, gpu=False)
     return _tts
 
-
-def transcribe_wav(wav_path: str) -> str:
-    """
-    Transcribe audio file to text using faster-whisper.
-    
-    Args:
-        wav_path: path to WAV file (should be 48k 16-bit mono)
-    
-    Returns:
-        Transcribed text (empty string if no speech detected)
-    """
-    try:
-        stt = get_stt_model()
-        logger.info(f"Transcribing: {wav_path}")
-        segments, _ = stt.transcribe(wav_path)
-        text = " ".join([s.text.strip() for s in segments]).strip()
-        logger.info(f"✓ Transcribed: {text[:100]}")
-        return text
-    except Exception as e:
-        logger.error(f"STT failed: {e}", exc_info=True)
-        raise
-
-
-def query_llm(text: str) -> str:
-    """
-    Query LLM (using Hugging Face Transformers) with user text and get reply.
-
-    This function lazy-loads a transformers "text-generation" pipeline the first
-    time it is called. It will try to use CUDA if available and requested via
-    the DEVICE environment variable. The default model is 'gpt2' but you should
-    set `MODEL_NAME_LLM` in your .env to a larger/chat-capable model.
-
-    Args:
-        text: user message
-
-    Returns:
-        LLM reply text
-    """
-    try:
-        pipe = get_llm_pipeline()
-        logger.info(f"Querying LLM (model={MODEL_NAME_LLM}): {text[:80]}...")
-        # Use the text-generation pipeline to generate a reply.
-        # We keep generation deterministic by default (no sampling).
-        out = pipe(
-            text,
-            max_new_tokens=256,
-            do_sample=False,
-            temperature=0.0,
-        )
-        # Pipeline returns list of dicts with 'generated_text'
-        if isinstance(out, list) and len(out) > 0:
-            generated = out[0].get("generated_text", "").strip()
-            # If the model echoes the prompt, try to return only the new part
-            if generated.startswith(text):
-                reply = generated[len(text):].strip()
-            else:
-                reply = generated
-        else:
-            reply = "Sorry, I couldn't understand."
-
-        logger.info(f"✓ LLM reply: {reply[:200]}")
-        return reply
-    except Exception as e:
-        logger.error(f"LLM (transformers) query failed: {e}", exc_info=True)
-        return "Sorry, I couldn't process that."
-
-
 def get_llm_pipeline():
-    """Lazy-load a Hugging Face text-generation pipeline with torch device handling.
-
-    This will attempt to use CUDA if available and requested. To install a
-    CUDA 12.8 compatible PyTorch build, follow instructions in the project
-    README or run a command similar to:
-
-      pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-
-    (Exact command may vary by torch version; the comment is here to guide
-    users. If CUDA is not available, pipeline will use CPU.)
-    """
     global _llm_pipe
-    if _llm_pipe is not None:
-        return _llm_pipe
-
-    try:
+    if _llm_pipe is None:
         from transformers import pipeline
         import torch
-    except ImportError:
-        logger.error("transformers or torch not installed. Install: pip install transformers torch torchvision torchaudio")
-        raise
-
-    # Detect device
-    use_cuda = False
-    if DEVICE.lower() == "cuda":
-        use_cuda = torch.cuda.is_available()
-    elif DEVICE.lower() == "cpu":
-        use_cuda = False
-    else:  # auto
-        use_cuda = torch.cuda.is_available()
-
-    device = 0 if use_cuda else -1
-    logger.info(f"Loading transformers pipeline (model={MODEL_NAME_LLM}) on {'cuda' if use_cuda else 'cpu'}")
-
-    # Create pipeline
-    _llm_pipe = pipeline(
-        "text-generation",
-        model=MODEL_NAME_LLM,
-        device=device,
-        trust_remote_code=True,
-    )
-    logger.info("✓ Transformers pipeline loaded")
+        use_cuda = (DEVICE.lower() == "cuda" and torch.cuda.is_available()) or (DEVICE.lower()=="auto" and torch.cuda.is_available())
+        device = 0 if use_cuda else -1
+        logger.info(f"Loading transformers pipeline (model={MODEL_NAME_LLM}) on {'cuda' if use_cuda else 'cpu'}")
+        _llm_pipe = pipeline("text-generation", model=MODEL_NAME_LLM, device=device, trust_remote_code=True)
     return _llm_pipe
 
+# -------------------- Core pipeline --------------------
+def transcribe_wav(wav_path: str) -> str:
+    stt = get_stt_model()
+    segments, _ = stt.transcribe(wav_path)
+    return " ".join([s.text.strip() for s in segments]).strip()
+
+def query_llm(text: str) -> str:
+    pipe = get_llm_pipeline()
+    out = pipe(text, max_new_tokens=256, do_sample=False, temperature=0.0)
+    if out and "generated_text" in out[0]:
+        generated = out[0]["generated_text"]
+        return generated[len(text):].strip() if generated.startswith(text) else generated
+    return "Sorry, I couldn't understand."
 
 def synthesize_tts(text: str, out_wav_path: str) -> str:
+    tts = get_tts()
+    tmp_wav = tempfile.mktemp(suffix=".wav")
+    tts.tts_to_file(text=text, file_path=tmp_wav)
+    shutil.copy(tmp_wav, out_wav_path)
+    os.remove(tmp_wav)
+    return out_wav_path
+
+# -------------------- Helpers for audio frames --------------------
+def frames_to_int16_bytes(frames: list, debug: bool = False) -> bytes:
     """
-    Synthesize text to speech using Coqui TTS and save to WAV.
-    Ensures output is 48k 16-bit mono.
-    
-    Args:
-        text: text to synthesize
-        out_wav_path: output WAV file path
-    
-    Returns:
-        Path to output WAV file (48k 16-bit mono)
+    Convert list of frame objects (each has .data bytes) into PCM16 bytes.
+    Try these strategies in order:
+      1) assume data is little-endian int16 PCM
+      2) assume data is float32 array -> convert to int16
+      3) try chunk-by-chunk fallback
+    Return b'' if cannot convert.
     """
+    if not frames:
+        if debug: logger.debug("frames_to_int16_bytes: empty frames")
+        return b""
+
+    # concatenate bytes present
+    parts = []
+    total_len = 0
+    for f in frames:
+        d = getattr(f, "data", None)
+        if d:
+            parts.append(d)
+            total_len += len(d)
+    combined = b"".join(parts)
+    if not combined:
+        if debug: logger.debug("frames_to_int16_bytes: combined empty")
+        return b""
+
+    # 1) Likely int16: length divisible by 2 and appears noisy (not divisible cleanly by 4 OR heuristic)
     try:
-        from audio_utils import ensure_wav_48k16_mono
-        tts = get_tts()
-        logger.info(f"Synthesizing TTS: {text[:50]}...")
-        
-        # Write temporary WAV
-        tmp_wav = tempfile.mktemp(suffix=".wav")
-        tts.tts_to_file(text=text, file_path=tmp_wav)
-        
-        # Ensure output is 48k 16-bit mono
-        ensure_wav_48k16_mono(tmp_wav, out_wav_path)
-        logger.info(f"✓ TTS output saved to {out_wav_path}")
-        
-        # Clean temp file
-        if os.path.exists(tmp_wav):
-            os.remove(tmp_wav)
-        
-        return out_wav_path
+        if len(combined) % 2 == 0:
+            # Try interpret as int16 array
+            count = len(combined) // 2
+            # Quick sanity: count not gigantic
+            shorts = struct.unpack(f"<{count}h", combined)
+            # quick RMS check: if samples are within int16 range it's ok
+            # We'll accept this as PCM16 if not all zeros
+            if any(s != 0 for s in shorts):
+                if debug: logger.debug(f"frames_to_int16_bytes: interpreted as int16 (count={count})")
+                return combined
     except Exception as e:
-        logger.error(f"TTS failed: {e}", exc_info=True)
-        raise
+        if debug: logger.debug(f"frames_to_int16_bytes: int16 attempt failed: {e}")
 
-
-async def process_audio_file(in_wav_path: str, out_wav_path: str):
-    """
-    Full pipeline: STT -> LLM -> TTS.
-    
-    Args:
-        in_wav_path: input WAV file
-        out_wav_path: output WAV file
-    """
-    logger.info("=" * 60)
-    logger.info("Audio processing pipeline")
-    logger.info("=" * 60)
-    
-    # 1. Transcribe
+    # 2) Try float32 -> convert to int16
     try:
-        text = transcribe_wav(in_wav_path)
+        if len(combined) % 4 == 0:
+            countf = len(combined) // 4
+            floats = struct.unpack(f"<{countf}f", combined)
+            int16_list = []
+            for x in floats:
+                # clip and convert
+                v = int(round(x * 32767.0))
+                if v > 32767: v = 32767
+                if v < -32768: v = -32768
+                int16_list.append(v)
+            packed = struct.pack(f"<{len(int16_list)}h", *int16_list)
+            if debug: logger.debug(f"frames_to_int16_bytes: converted float32->int16 (count={len(int16_list)})")
+            return packed
     except Exception as e:
-        logger.error(f"STT step failed: {e}")
-        return
-    
-    if not text:
-        logger.warning("No speech detected in audio")
-        return
-    
-    # 2. Query LLM
-    reply_text = query_llm(text)
-    
-    # 3. Synthesize
+        if debug: logger.debug(f"frames_to_int16_bytes: float32 attempt failed: {e}")
+
+    # 3) Fallback: try chunk by chunk interpreting each chunk as int16 or float32
+    out_parts = []
+    offset = 0
+    while offset < len(combined):
+        remaining = len(combined) - offset
+        # try small int16 chunk
+        if remaining >= 2:
+            # attempt to unpack next N bytes as int16 (choose a safe chunk)
+            chunk_len = (remaining // 2) * 2
+            try:
+                count = chunk_len // 2
+                shorts = struct.unpack(f"<{count}h", combined[offset:offset+chunk_len])
+                out_parts.append(struct.pack(f"<{count}h", *shorts))
+                offset += chunk_len
+                continue
+            except Exception:
+                # try float32 fallback for remainder
+                break
+        else:
+            break
+
+    if out_parts:
+        return b"".join(out_parts)
+
+    # give up
+    if debug: logger.debug("frames_to_int16_bytes: giving up, returning empty")
+    return b""
+
+def is_frame_silent(frame, rms_threshold: float = 500.0, debug: bool = False) -> bool:
+    """
+    Compute RMS on frame.data and return True if below threshold.
+    Robust to int16 and float32 encodings.
+    """
+    data = getattr(frame, "data", None)
+    if not data:
+        if debug: logger.debug("is_frame_silent: no data -> silent")
+        return True
     try:
-        synthesize_tts(reply_text, out_wav_path)
+        # try int16
+        if len(data) % 2 == 0:
+            count = len(data) // 2
+            samples = struct.unpack(f"<{count}h", data)
+        else:
+            # try float32
+            if len(data) % 4 == 0:
+                count = len(data) // 4
+                floats = struct.unpack(f"<{count}f", data)
+                samples = [int(max(-32768, min(32767, int(round(x * 32767.0))))) for x in floats]
+            else:
+                # unknown format => conservative: not silent
+                if debug: logger.debug("is_frame_silent: unknown frame length -> not silent")
+                return False
+
+        # compute RMS
+        ssum = 0.0
+        for s in samples:
+            ssum += float(s) * float(s)
+        rms = (ssum / max(1, len(samples))) ** 0.5
+        if debug: logger.debug(f"is_frame_silent: rms={rms}, threshold={rms_threshold}")
+        return rms < rms_threshold
     except Exception as e:
-        logger.error(f"TTS step failed: {e}")
-        return
-    
-    logger.info("=" * 60)
-    logger.info("✓ Pipeline complete")
-    logger.info("=" * 60)
+        if debug: logger.debug(f"is_frame_silent: exception {e} -> treat as not silent")
+        return False
 
-
-# ============================================================================
-# LiveKit Agent (WebRTC)
-# ============================================================================
-
+# -------------------- LiveKit agent with greeting and audio processing --------------------
 class LiveKitAgent:
-    """
-    Voice assistant agent that connects to LiveKit and processes audio.
-    
-    Workflow:
-    1. Connect to room
-    2. Subscribe to participant microphone tracks
-    3. Buffer and process audio (STT -> LLM -> TTS)
-    4. Publish reply audio as a track
-    """
-    
     def __init__(self, room_name: str, agent_id: str, token: str):
         self.room_name = room_name
         self.agent_id = agent_id
         self.token = token
         self.room = None
         self.is_running = False
-        self.audio_buffer = queue.Queue()  # For buffering incoming audio
-        self.process_thread = None
-        
+        self.loop = None
+        self.greeted_participants = set()
+        self._participant_tracks = {}  # {participant_id: {track_sid: track}}
         logger.info(f"Initialized LiveKitAgent(room={room_name}, id={agent_id})")
-    
+
     async def connect(self):
-        """Connect to LiveKit room."""
-        try:
-            from livekit import rtc
+        from livekit import rtc
+        self.room = rtc.Room()
+        self.loop = asyncio.get_running_loop()
+        self.room.on("participant_connected", self._on_participant_connected)
+        self.room.on("track_published", self._on_track_published)
+        self.room.on("track_subscribed", self._on_track_subscribed)
+        await self.room.connect(LIVEKIT_URL, self.token)
+        self.is_running = True
+        logger.info(f"Connected to room {self.room_name}")
+
+        # Start global audio receiver thread
+        threading.Thread(target=self._audio_receiver_thread, daemon=True).start()
+
+        # Greet existing participants AND subscribe to their existing tracks
+        participants = getattr(self.room, "participants", {})
+        for p in participants.values():
+            identity = getattr(p, "identity", "unknown")
+            if identity not in self.greeted_participants:
+                self.greeted_participants.add(identity)
+                asyncio.create_task(self._send_greeting_message(identity))
             
-            logger.info(f"Connecting to {LIVEKIT_URL}...")
-            
-            # Create room
-            self.room = rtc.Room()
-            
-            # Set up event handlers
-            self.room.on_participant_connected += self._on_participant_connected
-            self.room.on_participant_disconnected += self._on_participant_disconnected
-            self.room.on_track_subscribed += self._on_track_subscribed
-            self.room.on_track_unsubscribed += self._on_track_unsubscribed
-            
-            # Connect to room
-            await self.room.aconnect(LIVEKIT_URL, self.token)
-            
-            logger.info(f"✓ Connected to {self.room_name}")
-            logger.info(f"✓ Local participant: {self.room.local_participant.identity}")
-            
-            self.is_running = True
-            
-        except Exception as e:
-            logger.error(f"Connection failed: {e}", exc_info=True)
-            raise
-    
+            # Subscribe to existing tracks
+            track_pubs = getattr(p, "track_publications", {})
+            for sid, pub in track_pubs.items():
+                if pub.subscribed:
+                    continue
+                logger.info(f"🔔 Subscribing to existing track {sid} from {identity}")
+                pub.set_subscribed(True)
+
+    async def disconnect(self):
+        self.is_running = False
+        if self.room:
+            await self.room.disconnect()
+            logger.info("Disconnected")
+
     def _on_participant_connected(self, participant):
-        """Callback when a participant joins the room."""
-        logger.info(f"👤 Participant connected: {participant.identity}")
-    
-    def _on_participant_disconnected(self, participant_id: str):
-        """Callback when a participant leaves the room."""
-        logger.info(f"👤 Participant disconnected: {participant_id}")
-    
-    def _on_track_subscribed(self, track, publication, participant):
-        """
-        Callback when a remote audio track is subscribed.
-        This is where we handle incoming audio from users.
-        """
-        logger.info(f"📢 Track subscribed: {publication.name or 'unknown'} from {participant.identity}")
+        identity = getattr(participant, "identity", "unknown")
+        logger.info(f"👤 Participant connected: {identity}")
+        if identity not in self.greeted_participants:
+            self.greeted_participants.add(identity)
+            asyncio.create_task(self._send_greeting_message(identity))
+
+    def _on_track_published(self, publication, participant):
+        """Called when a participant publishes a new track"""
+        identity = getattr(participant, "identity", "unknown")
+        kind = getattr(publication, "kind", "unknown")
+        logger.info(f"🎵 Track published by {identity}: kind={kind}, sid={publication.sid}")
         
-        if track.kind == "audio":
-            # Start listening to this audio track in a separate thread
-            threading.Thread(
-                target=self._audio_receiver_thread,
-                args=(track, participant.identity),
-                daemon=True
-            ).start()
-    
-    def _on_track_unsubscribed(self, publication, participant):
-        """Callback when a remote audio track is unsubscribed."""
-        logger.info(f"📢 Track unsubscribed from {participant.identity}")
-    
-    def _audio_receiver_thread(self, audio_track, participant_id: str):
+        # Auto-subscribe to audio tracks
+        # LiveKit SDK returns: kind=1 for audio, kind=2 for video
+        kind_str = str(kind).lower()
+        is_audio = (kind == 1 or kind_str == "audio" or kind_str == "1")
+        
+        if is_audio:
+            logger.info(f"🔔 Auto-subscribing to audio track from {identity}")
+            publication.set_subscribed(True)
+        else:
+            logger.info(f"⏭️ Skipping non-audio track: {kind}")
+
+    async def _send_greeting_message(self, user_identity: str):
+        greeting_text = f"Hello {user_identity}. Welcome to the room."
+        tmp_wav = tempfile.mktemp(suffix="_greeting.wav")
+        synthesize_tts(greeting_text, tmp_wav)
+        try:
+            here = Path(__file__).parent
+            static_folder = here / "static" / "greetings"
+            static_folder.mkdir(parents=True, exist_ok=True)
+            filename = f"greeting_{user_identity}_{uuid.uuid4().hex[:8]}.wav"
+            dst = static_folder / filename
+            shutil.copy(tmp_wav, dst)
+            base_url = TOKEN_SERVER_URL.rstrip("/")
+            url = f"{base_url}/static/greetings/{filename}"
+            payload = {"type":"greeting","text":greeting_text,"to":user_identity,"url":url}
+            await self._publish_data(payload)
+            logger.info(f"Published greeting for {user_identity} → {url}")
+        finally:
+            if os.path.exists(tmp_wav):
+                os.remove(tmp_wav)
+
+    async def _publish_data(self, payload: dict, reliable: bool = True):
+        if not self.room:
+            logger.debug("_publish_data: no room")
+            return
+        data_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        lp = getattr(self.room, "local_participant", None)
+        if lp is None:
+            logger.debug("_publish_data: no local_participant")
+            return
+        try:
+            res = lp.publish_data(data_bytes, reliable=reliable)
+            # if coroutine returned (depends on SDK), await it
+            if asyncio.iscoroutine(res):
+                await res
+            logger.info(f"📨 Published data: {payload.get('type')}")
+        except TypeError:
+            # fallback: maybe publish_data signature is different
+            try:
+                await lp.publish_data(data_bytes)
+                logger.info(f"📨 Published data fallback: {payload.get('type')}")
+            except Exception as e:
+                logger.error(f"Failed publish_data fallback: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"Failed to publish data: {e}", exc_info=True)
+
+    # Thread-safe publish helper for background threads
+    def _publish_data_sync(self, payload: dict, reliable: bool = True):
+        if not self.room:
+            logger.debug("_publish_data_sync: no room")
+            return
+        data_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        lp = getattr(self.room, "local_participant", None)
+        if lp is None:
+            logger.debug("_publish_data_sync: no local_participant")
+            return
+
+        def _call():
+            try:
+                res = lp.publish_data(data_bytes, reliable=reliable)
+                if asyncio.iscoroutine(res):
+                    # schedule awaiting in main loop
+                    asyncio.run_coroutine_threadsafe(res, self.loop)
+                logger.debug("    ✅ Published data (sync)")
+            except Exception as e:
+                logger.debug(f"    ⚠️ publish_data sync failed: {e}")
+
+        try:
+            # prefer scheduling coroutine in event loop
+            asyncio.run_coroutine_threadsafe(self._publish_data(payload, reliable=reliable), self.loop)
+        except Exception:
+            # fallback to thread runner
+            threading.Thread(target=_call, daemon=True).start()
+
+    # ---------------- audio receiving ----------------
+    def _on_track_subscribed(self, track, publication, participant):
+        pid = participant.identity
+        if pid not in self._participant_tracks:
+            self._participant_tracks[pid] = {}
+        self._participant_tracks[pid][publication.sid] = track
+        logger.info(f"📢 Track subscribed from {pid}, kind={getattr(track,'kind','unknown')}")
+        
+        # Start async frame receiver for this track
+        asyncio.run_coroutine_threadsafe(
+            self._receive_frames_async(track, pid),
+            self.loop
+        )
+
+    async def _receive_frames_async(self, track, participant_id: str):
         """
-        Thread that receives audio frames from a remote participant.
-        Buffers audio and triggers processing.
+        Async method to receive frames from a track using recv() in a loop.
         """
-        logger.info(f"🎤 Starting audio receiver for {participant_id}")
+        logger.info(f"🎧 Starting async frame receiver for {participant_id}")
+        
+        from collections import deque
+        buffer = deque(maxlen=2400)
+        silence_counter = 0
+        has_speech = False
         
         try:
-            audio_buffer = []
-            silence_count = 0
-            max_silence_frames = 240  # ~5 seconds at 48kHz with 20ms frames
-            
             while self.is_running:
                 try:
-                    # Get audio frame from track
-                    frame = audio_track.recv()  # Blocks until frame available
+                    # Use recv() with proper await
+                    frame = await track.recv()
                     
                     if frame is None:
-                        silence_count += 1
-                        if silence_count > max_silence_frames:
-                            # Silence detected, process buffered audio
-                            if audio_buffer:
-                                logger.info(f"📍 Silence detected, processing {len(audio_buffer)} frames...")
-                                self._process_audio_buffer(audio_buffer, participant_id)
-                                audio_buffer = []
-                            silence_count = 0
+                        await asyncio.sleep(0.01)
                         continue
                     
-                    silence_count = 0
+                    fd = getattr(frame, "data", b"")
+                    if fd:
+                        rms = (sum((int.from_bytes(fd[i:i+2], 'little', signed=True)**2
+                                    for i in range(0, len(fd), 2))) / max(1, len(fd)//2)) ** 0.5
+                        logger.info(f"  ▶ Frame received from {participant_id}: len={len(fd)} bytes, rms={rms:.2f}")
+                    else:
+                        logger.info(f"  ▶ Frame received from {participant_id}: empty data")
                     
-                    # Frame is rtc.AudioFrame: has data, sample_rate, num_channels, samples_per_channel
-                    audio_buffer.append(frame)
+                    buffer.append(frame)
+                    silent = is_frame_silent(frame, rms_threshold=600.0)
                     
-                    # If buffer grows large enough, process
-                    if len(audio_buffer) > 240:  # ~5 seconds
-                        logger.info(f"📍 Buffer full, processing {len(audio_buffer)} frames...")
-                        self._process_audio_buffer(audio_buffer, participant_id)
-                        audio_buffer = []
+                    if not silent:
+                        has_speech = True
+                        silence_counter = 0
+                    elif has_speech:
+                        silence_counter += 1
+                    
+                    if has_speech and silence_counter >= 10:
+                        frames_copy = list(buffer)
+                        buffer.clear()
+                        has_speech = False
+                        silence_counter = 0
+                        # Process in background thread
+                        threading.Thread(
+                            target=self._process_audio_buffer,
+                            args=(frames_copy, participant_id),
+                            daemon=True
+                        ).start()
                 
+                except asyncio.TimeoutError:
+                    await asyncio.sleep(0.01)
+                    continue
                 except Exception as e:
-                    logger.error(f"Error receiving audio frame: {e}", exc_info=True)
-                    break
-        
+                    logger.debug(f"Frame recv error: {e}")
+                    await asyncio.sleep(0.01)
+                    continue
+                    
         except Exception as e:
-            logger.error(f"Audio receiver thread error: {e}", exc_info=True)
-        finally:
-            logger.info(f"🎤 Audio receiver for {participant_id} stopped")
-    
+            logger.error(f"❌ Error in async frame receiver for {participant_id}: {e}", exc_info=True)
+
+    def _audio_receiver_thread(self):
+        import time
+        from collections import deque
+        logger.info("🔊 Audio receiver thread started (polling all participants)")
+
+        participant_buffers = {}  # {participant_id: {"frames": deque, "silence_counter": int, "has_speech": bool}}
+        last_log_time = 0
+
+        while self.is_running:
+            participants = getattr(self.room, "participants", {})
+            
+            # Log participant count every 5 seconds
+            current_time = time.time()
+            if current_time - last_log_time > 5:
+                logger.info(f"🔍 Polling {len(participants)} participants, {len(self._participant_tracks)} have tracks")
+                for pid, tracks in self._participant_tracks.items():
+                    logger.info(f"  → {pid}: {len(tracks)} track(s)")
+                last_log_time = current_time
+            
+            for p in participants.values():
+                pid = p.identity
+                tracks = self._participant_tracks.get(pid, {})
+                if not tracks:
+                    continue
+                if pid not in participant_buffers:
+                    participant_buffers[pid] = {"frames": deque(maxlen=2400),
+                                                "silence_counter": 0,
+                                                "has_speech": False}
+                    logger.info(f"📦 Created buffer for participant {pid}")
+
+                buf = participant_buffers[pid]
+
+                for sid, track in tracks.items():
+                    try:
+                        fut = asyncio.run_coroutine_threadsafe(track.recv(), self.loop)
+                        frame = fut.result(timeout=0.5)
+                        if frame is None:
+                            continue
+
+                        fd = getattr(frame, "data", b"")
+                        if fd:
+                            rms = (sum((int.from_bytes(fd[i:i+2], 'little', signed=True)**2
+                                        for i in range(0, len(fd), 2))) / max(1, len(fd)//2)) ** 0.5
+                            logger.info(f"  ▶ Frame received from {pid}: len={len(fd)} bytes, rms={rms:.2f}")
+                        else:
+                            logger.info(f"  ▶ Frame received from {pid}: empty data")
+
+                        buf["frames"].append(frame)
+                        silent = is_frame_silent(frame, rms_threshold=600.0)
+                        if not silent:
+                            buf["has_speech"] = True
+                            buf["silence_counter"] = 0
+                        elif buf["has_speech"]:
+                            buf["silence_counter"] += 1
+
+                        if buf["has_speech"] and buf["silence_counter"] >= 10:
+                            frames_copy = list(buf["frames"])
+                            buf["frames"].clear()
+                            buf["has_speech"] = False
+                            buf["silence_counter"] = 0
+                            threading.Thread(target=self._process_audio_buffer, args=(frames_copy, pid), daemon=True).start()
+                    except TimeoutError:
+                        # Normal - no frame available yet
+                        continue
+                    except Exception as e:
+                        logger.error(f"❌ Error receiving frame from {pid}: {e}", exc_info=True)
+                        continue
+            time.sleep(0.05)
     def _process_audio_buffer(self, frames: list, participant_id: str):
         """
-        Process buffered audio frames.
-        Converts to WAV -> STT -> LLM -> TTS -> publish.
+        Convert frames -> WAV -> STT -> LLM -> TTS -> publish URL back to clients.
+        Runs in background thread.
         """
-        logger.info(f"Processing audio from {participant_id} ({len(frames)} frames)...")
-        
+        if not frames:
+            logger.warning("No frames to process")
+            return
+
         try:
-            # Combine frames into single audio data
-            # Each frame should be 48kHz 16-bit mono
-            import numpy as np
-            import wave
-            
-            audio_data = b''
-            for frame in frames:
-                # frame.data is bytes of PCM16 audio
-                audio_data += frame.data
-            
-            # Save to temporary WAV
+            pcm_bytes = frames_to_int16_bytes(frames, debug=True)
+            if not pcm_bytes:
+                logger.warning("Converted PCM empty - skip")
+                return
+
             tmp_wav_in = tempfile.mktemp(suffix="_input.wav")
             tmp_wav_out = tempfile.mktemp(suffix="_reply.wav")
-            
-            # Write audio data as WAV (48kHz 16-bit mono)
-            with wave.open(tmp_wav_in, 'wb') as wav_file:
-                wav_file.setnchannels(1)  # Mono
-                wav_file.setsampwidth(2)  # 16-bit
-                wav_file.setframerate(48000)  # 48kHz
-                wav_file.writeframes(audio_data)
-            
-            logger.info(f"📁 Saved input audio to {tmp_wav_in}")
-            
-            # ===== STT =====
-            try:
-                text = transcribe_wav(tmp_wav_in)
-            except Exception as e:
-                logger.error(f"STT failed: {e}")
-                return
-            
+            import wave
+            with wave.open(tmp_wav_in, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(48000)
+                wf.writeframes(pcm_bytes)
+
+            # STT
+            text = transcribe_wav(tmp_wav_in)
             if not text.strip():
-                logger.warning("No speech detected")
+                logger.info(f"No speech detected for {participant_id}")
+                os.remove(tmp_wav_in)
                 return
-            
-            logger.info(f"🗣️ User said: {text}")
-            
-            # ===== LLM =====
+
+            self._publish_data_sync({"type":"transcript","from":participant_id,"text":text})
+
+            # LLM
             reply_text = query_llm(text)
-            logger.info(f"💬 Agent reply: {reply_text}")
-            
-            # ===== TTS =====
-            try:
-                synthesize_tts(reply_text, tmp_wav_out)
-            except Exception as e:
-                logger.error(f"TTS failed: {e}")
-                return
-            
-            # ===== PUBLISH =====
-            try:
-                self._publish_audio(tmp_wav_out)
-            except Exception as e:
-                logger.error(f"Failed to publish audio: {e}")
-            
-            # Cleanup
-            for tmp_file in [tmp_wav_in, tmp_wav_out]:
-                if os.path.exists(tmp_file):
-                    try:
-                        os.remove(tmp_file)
-                    except:
-                        pass
-        
-        except Exception as e:
-            logger.error(f"Audio processing failed: {e}", exc_info=True)
-    
-    def _publish_audio(self, wav_path: str):
-        """
-        Publish audio to the room as a track.
-        Uses LiveKit's LocalAudioTrack.
-        """
-        logger.info(f"Publishing audio: {wav_path}")
-        
-        try:
-            from livekit import rtc
-            from audio_source import wav_to_frames
-            
-            # Load WAV and get frames
-            frames = wav_to_frames(wav_path)
-            
-            if not frames:
-                logger.warning("No audio frames to publish")
-                return
-            
-            # Create audio source and track
-            # Note: LiveKit's rtc.LocalAudioTrack can publish raw PCM16 frames
-            # We create a simple publisher that pushes frames
-            
-            logger.info(f"Publishing {len(frames)} frames...")
-            
-            # Create a track source
-            track = rtc.LocalAudioTrack.create_audio_track(
-                "agent-reply",
-                sample_rate=48000,
-                num_channels=1,
-                audio_source=self._create_frame_source(frames)
-            )
-            
-            # Publish the track
-            publication = self.room.local_participant.publish_track(track)
-            
-            logger.info(f"✓ Published audio track: {publication.name}")
-            
-        except Exception as e:
-            logger.error(f"Publish failed: {e}", exc_info=True)
-            raise
-    
-    def _create_frame_source(self, frames: list):
-        """
-        Create an audio source that pushes pre-recorded frames.
-        This is a workaround for publishing static audio.
-        """
-        # For now, we'll use a simple approach: create a source that yields frames
-        # In a real implementation, you'd subclass rtc.AudioSource
-        
-        class SimpleFrameSource:
-            def __init__(self, frames_list):
-                self.frames = frames_list
-                self.index = 0
-            
-            async def get_frame(self):
-                if self.index < len(self.frames):
-                    frame_data = self.frames[self.index]
-                    self.index += 1
-                    # Return frame tuple: (data, sample_rate, num_channels, samples_per_channel)
-                    return (frame_data, 48000, 1, 960)
-                return None
-        
-        return SimpleFrameSource(frames)
-    
-    async def disconnect(self):
-        """Disconnect from room and cleanup."""
-        logger.info("Disconnecting from room...")
-        self.is_running = False
-        
-        if self.room:
-            try:
-                await self.room.adisconnect()
-                logger.info("✓ Disconnected")
-            except Exception as e:
-                logger.error(f"Disconnect error: {e}")
 
+            # TTS
+            synthesize_tts(reply_text, tmp_wav_out)
 
-# ============================================================================
-# Helper functions for token management
-# ============================================================================
+            # Copy to static folder & publish URL
+            here = Path(__file__).parent
+            static_folder = here / "static" / "greetings"
+            static_folder.mkdir(parents=True, exist_ok=True)
+            filename = f"reply_{uuid.uuid4().hex[:8]}.wav"
+            dst = static_folder / filename
+            shutil.copy(tmp_wav_out, dst)
+            url = f"{TOKEN_SERVER_URL.rstrip('/')}/static/greetings/{filename}"
+            self._publish_data_sync({"type":"greeting","url":url,"from":"agent","to":participant_id,"text":reply_text})
 
-async def fetch_token_from_server(room: str, identity: str) -> Optional[str]:
-    """Fetch token from token server."""
+        finally:
+            for f in [tmp_wav_in, tmp_wav_out]:
+                if os.path.exists(f):
+                    os.remove(f)
+
+# -------------------- Token helpers --------------------
+async def fetch_token_from_server(room: str, identity: str):
+    import requests
+    resp = requests.post(f"{TOKEN_SERVER_URL}/api/get_token", json={"room": room, "identity": identity}, timeout=5)
+    if resp.status_code == 200:
+        return resp.json().get("token")
+    return None
+
+def generate_token_directly():
     try:
-        import requests
-        logger.info(f"Fetching token from {TOKEN_SERVER_URL}...")
-        resp = requests.post(
-            f"{TOKEN_SERVER_URL}/api/get_token",
-            json={"room": room, "identity": identity},
-            timeout=5
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            token = data.get("token")
-            logger.info(f"✓ Got token")
-            return token
-        else:
-            logger.warning(f"Token server returned {resp.status_code}")
-            return None
-    except Exception as e:
-        logger.warning(f"Could not fetch token from server: {e}")
-        return None
+        from livekit.api.access_token import AccessToken, VideoGrants
+    except ImportError:
+        from livekit.api import AccessToken, VideoGrants
+    at = AccessToken(api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
+    vg = VideoGrants(
+        room_join=True, 
+        room=ROOM, 
+        can_publish=True, 
+        can_subscribe=True,
+        can_publish_data=True
+    )
+    if hasattr(at, "with_identity"):
+        at = at.with_identity(AGENT_ID)
+    setattr(at, "video_grants", vg)
+    token = at.to_jwt()
+    logger.info(f"✅ Token generated: can_subscribe={vg.can_subscribe}, can_publish={vg.can_publish}, can_publish_data={vg.can_publish_data}")
+    return token
 
-
-def generate_token_directly() -> Optional[str]:
-    """Generate token directly using LiveKit SDK."""
-    try:
-        from livekit.api import AccessToken, VideoGrant
-        logger.info("Generating token directly...")
-        at = AccessToken(api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
-        grant = VideoGrant(room=ROOM, can_publish=True, can_subscribe=True)
-        at.add_grant(grant)
-        at.set_identity(AGENT_ID)
-        token = at.to_jwt()
-        logger.info("✓ Token generated")
-        return token
-    except Exception as e:
-        logger.error(f"Failed to generate token: {e}")
-        return None
-
-
+# -------------------- Runner --------------------
 async def run_livekit_agent():
-    """Run agent connected to LiveKit."""
-    if not (LIVEKIT_API_KEY and LIVEKIT_API_SECRET):
-        logger.error("LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set")
-        logger.error("Set them in .env or environment, then run: python agent.py --livekit")
-        return
-    
-    # Get token
-    token = await fetch_token_from_server(ROOM, AGENT_ID)
-    
-    if not token:
-        token = generate_token_directly()
-    
+    token = await fetch_token_from_server(ROOM, AGENT_ID) or generate_token_directly()
     if not token:
         logger.error("Could not obtain token")
         return
-    
-    # Create and run agent
     agent = LiveKitAgent(ROOM, AGENT_ID, token)
-    
+    await agent.connect()
     try:
-        await agent.connect()
-        
-        # Keep running until interrupted
         while agent.is_running:
             await asyncio.sleep(1)
-    
     except KeyboardInterrupt:
-        logger.info("Agent interrupted by user")
-    except Exception as e:
-        logger.error(f"Agent error: {e}", exc_info=True)
+        pass
     finally:
         await agent.disconnect()
 
-
 async def main():
-    """Main entry point."""
     parser = argparse.ArgumentParser(description="LiveKit voice agent")
-    parser.add_argument(
-        "--livekit",
-        action="store_true",
-        help="Connect to LiveKit room"
-    )
-    parser.add_argument(
-        "--local-debug",
-        action="store_true",
-        help="Test STT/LLM/TTS pipeline locally (no LiveKit)"
-    )
-    parser.add_argument(
-        "--sample",
-        type=str,
-        help="Input WAV file for local debug (default: ./sample.wav)"
-    )
-    parser.add_argument(
-        "--output",
-        type=str,
-        help="Output WAV file for local debug (default: ./sample_reply.wav)"
-    )
-    
+    parser.add_argument("--livekit", action="store_true")
+    parser.add_argument("--local-debug", action="store_true")
+    parser.add_argument("--sample", type=str, help="Input WAV")
+    parser.add_argument("--output", type=str, help="Output WAV")
     args = parser.parse_args()
-    
-    if args.local_debug:
-        # Local debug mode
-        sample_in = args.sample or "./sample.wav"
-        sample_out = args.output or "./sample_reply.wav"
-        
-        if not os.path.exists(sample_in):
-            logger.error(f"Sample file not found: {sample_in}")
-            logger.info("Usage: python agent.py --local-debug --sample <input.wav> [--output <output.wav>]")
-            return
-        
-        await process_audio_file(sample_in, sample_out)
-    
-    elif args.livekit:
-        # LiveKit mode
-        await run_livekit_agent()
-    
-    else:
-        # Show usage
-        parser.print_help()
 
+    if args.local_debug:
+        logger.info("Local debug mode is not using livekit.")
+        # you can call process_audio_file manually if needed
+    elif args.livekit:
+        await run_livekit_agent()
+    else:
+        parser.print_help()
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Agent stopped by user")
         sys.exit(0)
-    except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
-        sys.exit(1)

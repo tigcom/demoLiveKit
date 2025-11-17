@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>LiveKit FE→BE Logging Demo</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 1rem; }
+    #logs { white-space: pre-wrap; border: 1px solid #ddd; padding: .5rem; height: 200px; overflow:auto }
+    label { display:block; margin-top:.5rem }
+  </style>
+</head>
+<body>
+  <h2>LiveKit FE → BE Logging Demo (index2.html)</h2>
+  <label>Room: <input id="room" value="demo-room"></label>
+  <label>Identity: <input id="identity" value="student-1"></label>
+  <button id="join">Join</button>
+  <div id="logs"></div>
+
+  <script type="module">
+    import { Room, createLocalAudioTrack } from 'https://unpkg.com/livekit-client/dist/livekit-client.esm.js';
+
+    const TOKEN_SERVER_URL = 'http://localhost:8000';
+    const logsEl = document.getElementById('logs');
+    const logs = (m) => { logsEl.innerText += m + '\n'; console.log(m); };
+
+    async function getToken(room, identity) {
+      const res = await fetch(`${TOKEN_SERVER_URL}/api/get_token`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({room, identity}) });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    }
+
+    document.getElementById('join').addEventListener('click', async () => {
+      const roomName = document.getElementById('room').value.trim();
+      const identity = document.getElementById('identity').value.trim();
+      if (!roomName || !identity) return logs('Room and identity required');
+
+      logs('Requesting token...');
+      let tokenResp;
+      try { tokenResp = await getToken(roomName, identity); } catch (e) { return logs('Token error: '+e.message); }
+
+      const room = new Room();
+      room.on('connectionStateChanged', s => logs('Connection: '+s));
+      try {
+        logs('Connecting...');
+        await room.connect(tokenResp.wsUrl, tokenResp.token);
+        logs('Connected as '+room.localParticipant.identity);
+      } catch (e) { return logs('Connect failed: '+e.message); }
+
+      // publish mic
+      try {
+        const track = await createLocalAudioTrack();
+        const pub = await room.localParticipant.publishTrack(track);
+        logs('Published track:');
+        logs(JSON.stringify({ kind: pub.kind || pub.track?.kind || 'unknown' }));
+        console.log('Published track object:', pub);
+
+        if (pub.track) {
+          pub.track.on('mute', () => logs('Track muted'));
+          pub.track.on('unmute', () => logs('Track unmuted'));
+        }
+
+        // also show local audio so you can speak and hear yourself (if allowed)
+        const audioEl = document.createElement('audio');
+        audioEl.autoplay = true;
+        audioEl.srcObject = new MediaStream([track.mediaStreamTrack]);
+        document.body.appendChild(audioEl);
+
+      } catch (e) {
+        logs('Publish mic failed: '+e.message);
+      }
+
+      room.on('trackSubscribed', (publication, track) => {
+        logs('Remote track subscribed: '+(publication.trackName||track.kind));
+        if (track.kind === 'audio') {
+          const a = document.createElement('audio'); a.autoplay = true; a.controls = true; a.srcObject = new MediaStream([track.mediaStreamTrack]); document.body.appendChild(a);
+        }
+      });
+
+      room.on('dataReceived', (payload, participant) => {
+        try {
+          const raw = new TextDecoder().decode(payload instanceof Uint8Array ? payload : payload.data || payload);
+          logs('DataReceived from '+(participant?.identity||'unknown')+': '+raw);
+        } catch(e) { logs('dataReceived error: '+e.message); }
+      });
+
+    });
+  </script>
+</body>
+</html>

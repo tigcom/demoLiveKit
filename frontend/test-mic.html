@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Test Microphone</title>
+</head>
+<body>
+    <h2>Test Microphone</h2>
+    <button id="test">Test Mic</button>
+    <div id="log" style="white-space: pre-wrap; margin-top: 1rem; border: 1px solid #ddd; padding: 8px;"></div>
+
+    <script>
+        const log = (msg) => {
+            document.getElementById('log').innerText += msg + '\n';
+            console.log(msg);
+        };
+
+        document.getElementById('test').addEventListener('click', async () => {
+            try {
+                log('🎤 Requesting microphone access...');
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                const track = stream.getAudioTracks()[0];
+                log(`✅ Mic granted: ${track.label}`);
+                log(`   Enabled: ${track.enabled}`);
+                log(`   Muted: ${track.muted}`);
+                log(`   ReadyState: ${track.readyState}`);
+                
+                // Get settings
+                const settings = track.getSettings();
+                log(`   Sample Rate: ${settings.sampleRate} Hz`);
+                log(`   Channel Count: ${settings.channelCount}`);
+                
+                // Create audio context to analyze
+                const audioContext = new AudioContext();
+                const source = audioContext.createMediaStreamSource(stream);
+                const analyser = audioContext.createAnalyser();
+                analyser.fftSize = 2048;
+                source.connect(analyser);
+                
+                const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                
+                log('\n🔊 Speak into your microphone...');
+                
+                let checkCount = 0;
+                const interval = setInterval(() => {
+                    analyser.getByteTimeDomainData(dataArray);
+                    
+                    // Calculate RMS
+                    let sum = 0;
+                    for (let i = 0; i < dataArray.length; i++) {
+                        const normalized = (dataArray[i] - 128) / 128;
+                        sum += normalized * normalized;
+                    }
+                    const rms = Math.sqrt(sum / dataArray.length);
+                    const db = 20 * Math.log10(rms);
+                    
+                    log(`   RMS: ${rms.toFixed(4)}, dB: ${db.toFixed(2)}`);
+                    
+                    checkCount++;
+                    if (checkCount >= 20) {
+                        clearInterval(interval);
+                        stream.getTracks().forEach(t => t.stop());
+                        log('\n✅ Test complete. If RMS stayed near 0, your mic is not working.');
+                    }
+                }, 500);
+                
+            } catch (err) {
+                log(`❌ Error: ${err.message}`);
+            }
+        });
+    </script>
+</body>
+</html>

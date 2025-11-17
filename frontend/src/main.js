@@ -1,6 +1,5 @@
 import { createLocalAudioTrack, Room } from "livekit-client";
 
-// Load LiveKit URL from environment variables (Vite)
 const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL || "wss://localhost:7880";
 const TOKEN_SERVER_URL = import.meta.env.VITE_TOKEN_SERVER_URL || "http://localhost:8000";
 
@@ -10,126 +9,197 @@ const logs = (m) => {
   console.log(m);
 };
 
+// Transcript container
+let transcriptsEl = document.getElementById("transcripts");
+if (!transcriptsEl) {
+  transcriptsEl = document.createElement("div");
+  transcriptsEl.id = "transcripts";
+  transcriptsEl.style.border = "1px solid #ddd";
+  transcriptsEl.style.padding = "0.5rem";
+  transcriptsEl.style.marginTop = "1rem";
+  transcriptsEl.style.maxHeight = "200px";
+  transcriptsEl.style.overflowY = "auto";
+  transcriptsEl.innerHTML = "<strong>Transcripts</strong><br/>";
+  logsEl.parentNode.insertBefore(transcriptsEl, logsEl.nextSibling);
+}
+
+const appendTranscript = (who, text) => {
+  const p = document.createElement("div");
+  p.style.padding = "0.25rem 0";
+  p.innerHTML = `<strong>${who}:</strong> ${text}`;
+  transcriptsEl.appendChild(p);
+  transcriptsEl.scrollTop = transcriptsEl.scrollHeight;
+};
+
 async function getToken(room, identity) {
   const res = await fetch(`${TOKEN_SERVER_URL}/api/get_token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ room, identity }),
   });
-  
+
   if (!res.ok) {
     const errText = await res.text();
     throw new Error(`Token server error (${res.status}): ${errText}`);
   }
-  
-  try {
-    const j = await res.json();
-    return j;
-  } catch (e) {
-    throw new Error(`Invalid token response (not JSON): ${e.message}`);
-  }
+
+  return res.json();
 }
 
 document.getElementById("join").addEventListener("click", async () => {
   const roomName = document.getElementById("room").value.trim();
   const identity = document.getElementById("identity").value.trim();
-  
-  if (!roomName || !identity) {
-    logs("❌ Error: Room and identity cannot be empty");
-    return;
-  }
-  
+  if (!roomName || !identity) return logs("❌ Room and identity cannot be empty");
+
   logs("➜ Requesting token...");
   let tokenResp;
   try {
     tokenResp = await getToken(roomName, identity);
   } catch (e) {
-    logs(`❌ Token request failed: ${e.message}`);
-    logs("💡 Check: Is token_server running on port 8000?");
-    logs("💡 Command: uvicorn token_server:app --port 8000");
-    return;
-  }
-  
-  if (!tokenResp.token || !tokenResp.wsUrl) {
-    logs("❌ Invalid token response (missing token or wsUrl)");
-    return;
+    return logs(`❌ Token request failed: ${e.message}`);
   }
 
   const room = new Room();
-  
-  // Listen for connection state changes
-  room.on("connectionStateChanged", (state) => {
-    logs(`📡 Connection state: ${state}`);
-  });
-  
+  room.on("connectionStateChanged", (state) => logs(`📡 Connection state: ${state}`));
+
   try {
     logs(`➜ Connecting to ${tokenResp.wsUrl}...`);
     await room.connect(tokenResp.wsUrl, tokenResp.token);
-    logs(`✓ Connected to room: ${room.name}`);
-    logs(`✓ Local participant: ${room.localParticipant.identity}`);
+    logs(`✓ Connected: ${room.name}, Local participant: ${room.localParticipant.identity}`);
   } catch (e) {
-    logs(`❌ Connection failed: ${e.message}`);
-    logs(`💡 Check: VITE_LIVEKIT_URL in frontend .env is correct`);
-    logs(`💡 Check: Token server is running (${TOKEN_SERVER_URL})`);
-    logs(`💡 Details: ${e.toString()}`);
-    return;
+    return logs(`❌ Connection failed: ${e.message}`);
   }
 
   // Publish mic
+  let audioTrack;
   try {
     logs("➜ Publishing local microphone...");
-    const track = await createLocalAudioTrack();
-    await room.localParticipant.publishTrack(track);
-    logs("✓ Published local microphone");
+    audioTrack = await createLocalAudioTrack();
+    const pub = await room.localParticipant.publishTrack(audioTrack);
+    console.log("📡 Published track:", pub);
+    logs("✓ Local mic published");
+
+    // Track mute/unmute events
+    if (pub.track) {
+      pub.track.on("mute", () => {
+        logs("🔇 Track muted");
+      });
+      pub.track.on("unmute", () => {
+        logs("🔊 Track unmuted");
+      });
+    }
+
+    // --------------------------------------------------------
+    // ✔ TEST 1: attach your own mic (self-monitor)
+    // --------------------------------------------------------
+    const selfAudioEl = document.createElement("audio");
+    selfAudioEl.autoplay = true;
+    selfAudioEl.controls = true;
+    selfAudioEl.style.marginTop = "1rem";
+    selfAudioEl.srcObject = new MediaStream([audioTrack.mediaStreamTrack]);
+    document.body.appendChild(selfAudioEl);
+    logs("🎧 Self-monitor enabled — you should hear your own mic");
+
+    // --------------------------------------------------------
+    // ✔ TEST 2: outbound audio stats
+    // --------------------------------------------------------
+    setInterval(async () => {
+      const stats = await audioTrack.getRTCStatsReport();
+      stats.forEach((report) => {
+        if (report.type === "outbound-rtp" && report.kind === "audio") {
+          console.log("🔊 packetsSent =", report.packetsSent);
+          console.log("📦 bytesSent =", report.bytesSent);
+          logs(`📢 Mic stats → packets=${report.packetsSent}, bytes=${report.bytesSent}`);
+        }
+      });
+    }, 2000);
+
+    // SpeechRecognition (optional)
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.lang = "vi-VN";
+      recognition.continuous = true;
+      recognition.interimResults = true;
+
+      recognition.onresult = (event) => {
+        let transcript = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        appendTranscript("Local User", transcript);
+      };
+
+      recognition.onerror = (event) => logs(`⚠️ SpeechRecognition error: ${event.error}`);
+      recognition.start();
+      logs("🎤 Listening to your voice...");
+    } else {
+      logs("⚠️ Browser does not support SpeechRecognition");
+    }
   } catch (e) {
-    logs(`❌ Failed to publish mic: ${e.message}`);
-    logs("💡 Check: Microphone permissions granted?");
-    return;
+    return logs(`❌ Failed to publish mic: ${e.message}`);
   }
 
-  // Listen for remote participants
-  room.on("participantConnected", (p) => {
-    logs(`👤 Participant connected: ${p.identity} (${p.kind})`);
-  });
-  
-  room.on("participantDisconnected", (p) => {
-    logs(`👤 Participant disconnected: ${p.identity}`);
+  // Remote participants
+  room.on("participantConnected", (p) => logs(`👤 Participant connected: ${p.identity}`));
+  room.on("participantDisconnected", (p) => logs(`👤 Participant disconnected: ${p.identity}`));
+
+  // --------------------------------------------------------
+  // ✔ TEST 3: verify trackPublished event
+  // --------------------------------------------------------
+  room.localParticipant.on("trackPublished", (pub) => {
+    logs(`📡 trackPublished → ${pub.kind}`);
+    console.log("Track published:", pub);
   });
 
-  // Subscribe to remote audio tracks
+  // Subscribe remote audio
   room.on("trackSubscribed", (publication, track) => {
     logs(`📢 Track subscribed: ${publication.trackName || track.kind}`);
-    
+
     if (track.kind === "audio") {
       const audioEl = document.createElement("audio");
       audioEl.autoplay = true;
       audioEl.controls = true;
       audioEl.style.display = "block";
       audioEl.style.marginTop = "1rem";
-      
-      // Attach media stream from track
-      if (track.mediaStreamTrack) {
-        const mediaStream = new MediaStream([track.mediaStreamTrack]);
-        audioEl.srcObject = mediaStream;
-      } else if (track.mediaStream) {
-        audioEl.srcObject = track.mediaStream;
-      } else {
-        logs(`⚠️ Warning: Could not attach audio stream from track`);
-        return;
-      }
-      
+
+      const mediaStream = new MediaStream([track.mediaStreamTrack]);
+      audioEl.srcObject = mediaStream;
       document.body.appendChild(audioEl);
-      logs("🔊 Audio track attached and playing automatically");
+      logs("🔊 Playing remote audio stream");
     }
   });
-  
-  room.on("trackUnsubscribed", (publication, track) => {
-    logs(`📢 Track unsubscribed: ${publication.trackName || track.kind}`);
-  });
-  
-  // Handle room disconnection
-  room.on("disconnected", () => {
-    logs("⚠️ Disconnected from room");
-  });
-});
 
+  // Data messages
+  room.on("dataReceived", (payload, participant) => {
+    try {
+      const raw = new TextDecoder().decode(
+        payload instanceof Uint8Array ? payload : payload.data || payload
+      );
+      let msg;
+      try {
+        msg = JSON.parse(raw);
+      } catch {
+        msg = null;
+      }
+
+      if (!msg) return appendTranscript(participant?.identity || "remote", raw);
+
+      if (msg.type === "transcript") {
+        appendTranscript(msg.from || participant?.identity || "user", msg.text || "");
+      } else if (msg.type === "greeting" && msg.url) {
+        appendTranscript(msg.to || "agent", msg.text || "");
+        const audioEl = document.createElement("audio");
+        audioEl.autoplay = true;
+        audioEl.controls = true;
+        audioEl.src = msg.url;
+        document.body.appendChild(audioEl);
+        logs(`🔊 Playing greeting audio from ${msg.url}`);
+      }
+    } catch (e) {
+      logs(`⚠️ Error handling dataReceived: ${e}`);
+    }
+  });
+
+  room.on("disconnected", () => logs("⚠️ Disconnected from room"));
+});

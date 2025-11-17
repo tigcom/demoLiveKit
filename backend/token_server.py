@@ -21,41 +21,16 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
-
+from livekit.api.access_token import AccessToken, VideoGrants
+from fastapi.staticfiles import StaticFiles
+import pathlib
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# Robust import: try multiple paths for AccessToken and VideoGrant
-AccessToken = None
-VideoGrant = None
-IMPORT_ERROR_MSG = None
 
-_import_attempts = [
-    ("livekit.api", ["AccessToken", "VideoGrant"]),
-    ("livekit", ["AccessToken", "VideoGrant"]),
-    ("livekit.jwt", ["AccessToken", "VideoGrant"]),
-]
-
-for module_name, classes in _import_attempts:
-    try:
-        module = __import__(module_name, fromlist=classes)
-        AccessToken = getattr(module, "AccessToken", None)
-        VideoGrant = getattr(module, "VideoGrant", None)
-        if AccessToken and VideoGrant:
-            logger.info(f"✓ Imported AccessToken, VideoGrant from {module_name}")
-            break
-    except (ImportError, AttributeError) as e:
-        logger.debug(f"  ✗ Could not import from {module_name}: {e}")
-
-if not (AccessToken and VideoGrant):
-    IMPORT_ERROR_MSG = (
-        "Could not import AccessToken/VideoGrant from any known livekit module path. "
-        "Install 'livekit' package: pip install livekit"
-    )
-    logger.error(IMPORT_ERROR_MSG)
 
 # Load env vars
 LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY")
@@ -63,6 +38,14 @@ LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
 LIVEKIT_URL = os.getenv("LIVEKIT_URL", "https://cloud.livekit.io")
 
 app = FastAPI(title="LiveKit Token Server")
+
+# Serve static files (for TTS greetings and similar assets)
+static_dir = pathlib.Path(__file__).parent / "static"
+greetings_dir = static_dir / "greetings"
+static_dir.mkdir(parents=True, exist_ok=True)
+greetings_dir.mkdir(parents=True, exist_ok=True)
+
+app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 # CORS: allow localhost:5173 (Vite dev) for development. In production, restrict to your domain.
 app.add_middleware(
@@ -90,56 +73,44 @@ async def healthz():
     return {"status": "ok"}
 
 
+from livekit.api.access_token import AccessToken, VideoGrants
+
 @app.post("/api/get_token")
 async def get_token(req: TokenRequest):
-    """
-    Generate a LiveKit access token.
-    
-    Returns:
-      {token: "...", wsUrl: "..."}  on success
-      
-    Errors:
-      500 if LIVEKIT_API_KEY/SECRET not set
-      500 if livekit SDK not installed
-    """
-    # Validate env
-    if not LIVEKIT_API_KEY:
-        logger.error("LIVEKIT_API_KEY not set in environment")
-        raise HTTPException(
-            status_code=500,
-            detail="LIVEKIT_API_KEY must be set in environment (.env or system env)"
-        )
-    if not LIVEKIT_API_SECRET:
-        logger.error("LIVEKIT_API_SECRET not set in environment")
-        raise HTTPException(
-            status_code=500,
-            detail="LIVEKIT_API_SECRET must be set in environment (.env or system env)"
-        )
+    print("🚀 /api/get_token called")
+    print(f"Received request: room={req.room}, identity={req.identity}")
 
-    # Check if SDK is available
-    if not (AccessToken and VideoGrant):
-        logger.error(IMPORT_ERROR_MSG)
-        raise HTTPException(
-            status_code=500,
-            detail=IMPORT_ERROR_MSG
-        )
+    if not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
+        print("❌ LIVEKIT_API_KEY or LIVEKIT_API_SECRET not set")
+        raise HTTPException(status_code=500, detail="LIVEKIT_API_KEY/SECRET not set")
 
     try:
-        # Create JWT token
-        at = AccessToken(api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
-        grant = VideoGrant(room=req.room, can_publish=True, can_subscribe=True)
-        at.add_grant(grant)
-        at.set_identity(req.identity)
-        token = at.to_jwt()
-        
-        logger.info(f"✓ Token issued for identity={req.identity}, room={req.room}")
-        return {"token": token, "wsUrl": LIVEKIT_URL}
-    except Exception as e:
-        logger.error(f"Failed to generate token: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Token generation failed: {str(e)}"
+        print("1️⃣ Building AccessToken (chained)")
+        at = (
+            AccessToken(api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
+            .with_identity(req.identity)
+            .with_name(req.identity)  # bạn có thể đổi thành tên hiển thị khác hoặc bỏ dòng này
+            .with_grants(
+                VideoGrants(
+                    room_join=True,
+                    room=req.room,
+                    can_publish=True,        # ✅ Cho phép publish audio/video
+                    can_subscribe=True,      # ✅ Cho phép subscribe tracks từ người khác
+                    can_publish_data=True,   # ✅ Cho phép gửi data messages
+                )
+            )
         )
+        print(f"AccessToken built (claims): {getattr(at, 'claims', at)}")
+
+        print("2️⃣ Generating JWT token")
+        token = at.to_jwt()
+        print(f"Token generated: {token}")
+
+        return {"token": token, "wsUrl": LIVEKIT_URL}
+
+    except Exception as e:
+        print(f"❌ Exception during token generation: {e}")
+        raise HTTPException(status_code=500, detail=f"Token generation failed: {str(e)}")
 
 
 if __name__ == "__main__":

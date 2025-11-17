@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Debug LiveKit Audio</title>
+    <script type="module">
+        import { createLocalAudioTrack, Room } from "https://cdn.jsdelivr.net/npm/livekit-client@2.5.0/+esm";
+        
+        window.debugLiveKit = async () => {
+            const TOKEN_SERVER_URL = "http://localhost:8000";
+            const roomName = "demo-room";
+            const identity = "debug-user";
+            
+            console.log("🔍 Step 1: Get token...");
+            const tokenResp = await fetch(`${TOKEN_SERVER_URL}/api/get_token`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ room: roomName, identity }),
+            }).then(r => r.json());
+            console.log("✅ Token received:", tokenResp.wsUrl);
+            
+            console.log("\n🔍 Step 2: Create room...");
+            const room = new Room();
+            
+            console.log("\n🔍 Step 3: Connect...");
+            await room.connect(tokenResp.wsUrl, tokenResp.token);
+            console.log("✅ Connected:", room.name);
+            
+            console.log("\n🔍 Step 4: Create audio track...");
+            const audioTrack = await createLocalAudioTrack({
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+            });
+            console.log("✅ Audio track created:", audioTrack);
+            console.log("   MediaStreamTrack:", audioTrack.mediaStreamTrack);
+            console.log("   Enabled:", audioTrack.mediaStreamTrack.enabled);
+            console.log("   Muted:", audioTrack.isMuted);
+            console.log("   ReadyState:", audioTrack.mediaStreamTrack.readyState);
+            
+            console.log("\n🔍 Step 5: Publish track...");
+            const pub = await room.localParticipant.publishTrack(audioTrack);
+            console.log("✅ Track published:", pub);
+            console.log("   Track SID:", pub.trackSid);
+            console.log("   Track name:", pub.trackName);
+            console.log("   Kind:", pub.kind);
+            console.log("   Source:", pub.source);
+            
+            console.log("\n🔍 Step 6: Monitor stats...");
+            let lastPackets = 0;
+            const interval = setInterval(async () => {
+                try {
+                    const stats = await audioTrack.getRTCStatsReport();
+                    stats.forEach((report) => {
+                        if (report.type === "outbound-rtp" && report.kind === "audio") {
+                            const packets = report.packetsSent || 0;
+                            const bytes = report.bytesSent || 0;
+                            const delta = packets - lastPackets;
+                            lastPackets = packets;
+                            
+                            console.log(`📊 Stats: packets=${packets} (+${delta}), bytes=${bytes}`);
+                            
+                            if (delta === 0) {
+                                console.warn("⚠️ WARNING: No new packets! Audio might not be sending.");
+                            }
+                        }
+                    });
+                } catch (e) {
+                    console.error("Stats error:", e);
+                }
+            }, 2000);
+            
+            console.log("\n✅ Debug complete. Speak into your mic and watch the stats.");
+            console.log("   If packets don't increase, your mic is not working.");
+            
+            // Store for manual inspection
+            window.room = room;
+            window.audioTrack = audioTrack;
+            window.pub = pub;
+            
+            return { room, audioTrack, pub };
+        };
+        
+        console.log("🎯 Run: await debugLiveKit()");
+    </script>
+</head>
+<body>
+    <h2>Debug LiveKit Audio</h2>
+    <p>Open browser console and run: <code>await debugLiveKit()</code></p>
+    <p>Then speak into your microphone and watch the console logs.</p>
+</body>
+</html>
