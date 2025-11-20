@@ -231,9 +231,6 @@ class LiveKitAgent:
         self.is_running = True
         logger.info(f"Connected to room {self.room_name}")
 
-        # Start global audio receiver thread
-        threading.Thread(target=self._audio_receiver_thread, daemon=True).start()
-
         # Greet existing participants AND subscribe to their existing tracks
         participants = getattr(self.room, "participants", {})
         for p in participants.values():
@@ -356,146 +353,72 @@ class LiveKitAgent:
     # ---------------- audio receiving ----------------
     def _on_track_subscribed(self, track, publication, participant):
         pid = participant.identity
+        if not getattr(track, "kind", None) == 1: # 1 for audio
+            return
+
         if pid not in self._participant_tracks:
             self._participant_tracks[pid] = {}
         self._participant_tracks[pid][publication.sid] = track
-        logger.info(f"📢 Track subscribed from {pid}, kind={getattr(track,'kind','unknown')}")
+        logger.info(f"📢 Audio track subscribed from {pid}")
         
-        # Start async frame receiver for this track
-        asyncio.run_coroutine_threadsafe(
-            self._receive_frames_async(track, pid),
-            self.loop
-        )
+        # Start a dedicated thread to receive frames for this track
+        threading.Thread(
+            target=self._audio_receiver_thread,
+            args=(track, pid),
+            daemon=True
+        ).start()
 
-    async def _receive_frames_async(self, track, participant_id: str):
+    def _audio_receiver_thread(self, track, participant_id: str):
         """
-        Async method to receive frames from a track using recv() in a loop.
+        This thread runs for each subscribed audio track. It receives frames, 
+        detects speech, and dispatches the audio buffer for processing.
         """
-        logger.info(f"🎧 Starting async frame receiver for {participant_id}")
-        
-        from collections import deque
-        buffer = deque(maxlen=2400)
+        logger.info(f"🎧 Starting audio receiver thread for {participant_id}")
+        buffer = deque(maxlen=2400)  # ~24s of audio at 50fps
         silence_counter = 0
         has_speech = False
         
-        try:
-            while self.is_running:
-                try:
-                    # Use recv() with proper await
-                    frame = await track.recv()
-                    
-                    if frame is None:
-                        await asyncio.sleep(0.01)
-                        continue
-                    
-                    fd = getattr(frame, "data", b"")
-                    if fd:
-                        rms = (sum((int.from_bytes(fd[i:i+2], 'little', signed=True)**2
-                                    for i in range(0, len(fd), 2))) / max(1, len(fd)//2)) ** 0.5
-                        logger.info(f"  ▶ Frame received from {participant_id}: len={len(fd)} bytes, rms={rms:.2f}")
-                    else:
-                        logger.info(f"  ▶ Frame received from {participant_id}: empty data")
-                    
-                    buffer.append(frame)
-                    silent = is_frame_silent(frame, rms_threshold=600.0)
-                    
-                    if not silent:
-                        has_speech = True
-                        silence_counter = 0
-                    elif has_speech:
-                        silence_counter += 1
-                    
-                    if has_speech and silence_counter >= 10:
-                        frames_copy = list(buffer)
-                        buffer.clear()
-                        has_speech = False
-                        silence_counter = 0
-                        # Process in background thread
-                        threading.Thread(
-                            target=self._process_audio_buffer,
-                            args=(frames_copy, participant_id),
-                            daemon=True
-                        ).start()
-                
-                except asyncio.TimeoutError:
-                    await asyncio.sleep(0.01)
-                    continue
-                except Exception as e:
-                    logger.debug(f"Frame recv error: {e}")
-                    await asyncio.sleep(0.01)
-                    continue
-                    
-        except Exception as e:
-            logger.error(f"❌ Error in async frame receiver for {participant_id}: {e}", exc_info=True)
-
-    def _audio_receiver_thread(self):
-        import time
-        from collections import deque
-        logger.info("🔊 Audio receiver thread started (polling all participants)")
-
-        participant_buffers = {}  # {participant_id: {"frames": deque, "silence_counter": int, "has_speech": bool}}
-        last_log_time = 0
-
         while self.is_running:
-            participants = getattr(self.room, "participants", {})
-            
-            # Log participant count every 5 seconds
-            current_time = time.time()
-            if current_time - last_log_time > 5:
-                logger.info(f"🔍 Polling {len(participants)} participants, {len(self._participant_tracks)} have tracks")
-                for pid, tracks in self._participant_tracks.items():
-                    logger.info(f"  → {pid}: {len(tracks)} track(s)")
-                last_log_time = current_time
-            
-            for p in participants.values():
-                pid = p.identity
-                tracks = self._participant_tracks.get(pid, {})
-                if not tracks:
+            try:
+                # Call the async track.recv() from this thread
+                future = asyncio.run_coroutine_threadsafe(track.recv(), self.loop)
+                frame = future.result(timeout=1.0)
+
+                if frame is None:
                     continue
-                if pid not in participant_buffers:
-                    participant_buffers[pid] = {"frames": deque(maxlen=2400),
-                                                "silence_counter": 0,
-                                                "has_speech": False}
-                    logger.info(f"📦 Created buffer for participant {pid}")
 
-                buf = participant_buffers[pid]
+                buffer.append(frame)
+                silent = is_frame_silent(frame, rms_threshold=600.0)
+                
+                if not silent:
+                    has_speech = True
+                    silence_counter = 0
+                elif has_speech:
+                    silence_counter += 1
+                
+                # End of speech detected after some silence
+                if has_speech and silence_counter >= 10: # 10 frames = 200ms of silence
+                    frames_copy = list(buffer)
+                    buffer.clear()
+                    has_speech = False
+                    silence_counter = 0
+                    
+                    # Process in a new thread to avoid blocking this receiver loop
+                    threading.Thread(
+                        target=self._process_audio_buffer,
+                        args=(frames_copy, participant_id),
+                        daemon=True
+                    ).start()
 
-                for sid, track in tracks.items():
-                    try:
-                        fut = asyncio.run_coroutine_threadsafe(track.recv(), self.loop)
-                        frame = fut.result(timeout=0.5)
-                        if frame is None:
-                            continue
+            except asyncio.TimeoutError:
+                # Expected when no frame is received
+                continue
+            except Exception as e:
+                logger.error(f"❌ Error in receiver for {participant_id}: {e}")
+                break # Exit thread on error
+        
+        logger.info(f"🛑 Stopping audio receiver thread for {participant_id}")
 
-                        fd = getattr(frame, "data", b"")
-                        if fd:
-                            rms = (sum((int.from_bytes(fd[i:i+2], 'little', signed=True)**2
-                                        for i in range(0, len(fd), 2))) / max(1, len(fd)//2)) ** 0.5
-                            logger.info(f"  ▶ Frame received from {pid}: len={len(fd)} bytes, rms={rms:.2f}")
-                        else:
-                            logger.info(f"  ▶ Frame received from {pid}: empty data")
-
-                        buf["frames"].append(frame)
-                        silent = is_frame_silent(frame, rms_threshold=600.0)
-                        if not silent:
-                            buf["has_speech"] = True
-                            buf["silence_counter"] = 0
-                        elif buf["has_speech"]:
-                            buf["silence_counter"] += 1
-
-                        if buf["has_speech"] and buf["silence_counter"] >= 10:
-                            frames_copy = list(buf["frames"])
-                            buf["frames"].clear()
-                            buf["has_speech"] = False
-                            buf["silence_counter"] = 0
-                            threading.Thread(target=self._process_audio_buffer, args=(frames_copy, pid), daemon=True).start()
-                    except TimeoutError:
-                        # Normal - no frame available yet
-                        continue
-                    except Exception as e:
-                        logger.error(f"❌ Error receiving frame from {pid}: {e}", exc_info=True)
-                        continue
-            time.sleep(0.05)
     def _process_audio_buffer(self, frames: list, participant_id: str):
         """
         Convert frames -> WAV -> STT -> LLM -> TTS -> publish URL back to clients.
@@ -505,6 +428,8 @@ class LiveKitAgent:
             logger.warning("No frames to process")
             return
 
+        tmp_wav_in = None
+        tmp_wav_out = None
         try:
             pcm_bytes = frames_to_int16_bytes(frames, debug=True)
             if not pcm_bytes:
@@ -524,7 +449,6 @@ class LiveKitAgent:
             text = transcribe_wav(tmp_wav_in)
             if not text.strip():
                 logger.info(f"No speech detected for {participant_id}")
-                os.remove(tmp_wav_in)
                 return
 
             self._publish_data_sync({"type":"transcript","from":participant_id,"text":text})
@@ -547,7 +471,7 @@ class LiveKitAgent:
 
         finally:
             for f in [tmp_wav_in, tmp_wav_out]:
-                if os.path.exists(f):
+                if f and os.path.exists(f):
                     os.remove(f)
 
 # -------------------- Token helpers --------------------

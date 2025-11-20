@@ -6,7 +6,7 @@ fastapi==0.95.2
 uvicorn[standard]==0.22.0
 
 # LiveKit Python SDK
-livekit==1.2.13
+livekit==1.0.19
 
 # STT / TTS / LLM helpers
 faster-whisper>=0.7.0
@@ -19,5 +19,5 @@ requests==2.31.0
 
 # Numeric / audio
 numpy==1.26.0
-scipy==1.11.0
+scipy>=1.11.2
 soundfile==0.12.1

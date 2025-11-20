@@ -113,23 +113,3 @@ async def get_token(req: TokenRequest):
         raise HTTPException(status_code=500, detail=f"Token generation failed: {str(e)}")
 
 
-if __name__ == "__main__":
-    print("\n" + "="*60)
-    print("LiveKit Token Server")
-    print("="*60)
-    if IMPORT_ERROR_MSG:
-        print(f"⚠ WARNING: {IMPORT_ERROR_MSG}")
-        print("  The server will start but /get_token will fail.")
-    else:
-        print("✓ LiveKit SDK imported successfully.")
-    print(f"✓ LIVEKIT_URL: {LIVEKIT_URL}")
-    print(f"✓ LIVEKIT_API_KEY: {'(set)' if LIVEKIT_API_KEY else '(NOT SET)'}")
-    print(f"✓ LIVEKIT_API_SECRET: {'(set)' if LIVEKIT_API_SECRET else '(NOT SET)'}")
-    print("\nRun with:")
-    print("  uvicorn token_server:app --host 0.0.0.0 --port 8000")
-    print("\nTest with:")
-    print("  curl http://localhost:8000/healthz")
-    print("  curl -X POST http://localhost:8000/api/get_token \\")
-    print("    -H 'Content-Type: application/json' \\")
-    print("    -d '{\"room\": \"demo-room\", \"identity\": \"test1\"}'")
-    print("="*60 + "\n")
